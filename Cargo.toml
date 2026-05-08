@@ -1,0 +1,102 @@
+[workspace]
+members = ["crates/*", "apps/*"]
+resolver = "2"
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+missing_docs = "allow"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Hector Crean <hectorcrean@gmail.com>"]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+
+
+[workspace.dependencies]
+
+kyoso_graph = { path = "crates/kyoso_graph" }
+kyoso_crdt = { path = "crates/kyoso_crdt" }
+kyoso_crdt_derive = { path = "crates/kyoso_crdt_derive" }
+kyoso_graph_crdt = { path = "crates/kyoso_graph_crdt" }
+kyoso_server = { path = "apps/kyoso_server" }
+kyoso_sync = { path = "crates/kyoso_sync" }
+kyoso_sync_derive = { path = "crates/kyoso_sync_derive" }
+kyoso_figma = { path = "crates/kyoso_figma" }
+kyoso_camera = { path = "crates/kyoso_camera" }
+kyoso_drag = { path = "crates/kyoso_drag" }
+kyoso_polyline = { path = "crates/kyoso_polyline" }
+kyoso_client = { path = "apps/kyoso_client" }
+
+# ── Bevy ───────────────────────────────────────────────────────────────────────
+# `default-features = false` lets each crate opt in to exactly the Bevy features
+# it needs, keeping library builds lean. The main app re-enables `"default"`.
+bevy      = { git = "https://github.com/bevyengine/bevy", branch = "main", default-features = false }
+
+# ── Math / data ────────────────────────────────────────────────────────────────
+bitflags = "2.4"
+bytemuck = "1.14"
+
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+strum     = { version = "0.26", features = ["derive"] }
+thiserror = "1.0"
+
+
+# ── Serialisation ─────────────────────────────────────────────────────────────
+serde      = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+schemars   = { version = "1.0.0", features = ["chrono04"] }
+# Compact varint-encoded format for CRDT wire frames.
+postcard   = { version = "1.1", features = ["alloc"] }
+
+# ── Async / networking ────────────────────────────────────────────────────────
+axum               = { version = "0.8.6", features = ["macros", "ws", "multipart"] }
+tokio              = { version = "1.49.0", features = ["full", "sync", "macros", "rt-multi-thread"] }
+tokio-tungstenite  = { version = "0.24" }
+tower              = "0.5"
+tower-http         = { version = "0.6", features = ["trace", "cors"] }
+futures            = "0.3"
+
+# ── Observability ─────────────────────────────────────────────────────────────
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# ── Concurrency primitives ────────────────────────────────────────────────────
+dashmap            = "6"
+once_cell          = "1"
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlx               = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "chrono"] }
+chrono             = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+async-trait        = "0.1"
+
+# ── Inter-thread comms ────────────────────────────────────────────────────────
+crossbeam-channel = "0.5.12"
+
+# ── IDs / time ────────────────────────────────────────────────────────────────
+uuid     = { version = "1.18", features = ["v4", "serde"] }
+web-time = "1.1.0"
+
+# ── Randomness ────────────────────────────────────────────────────────────────
+rand = { version = "0.8", features = ["small_rng"] }
+
+
+# Graph algorithms
+petgraph = "0.6.5"
+
+# Test-only: property-based testing
+proptest = "1.5"
+
+# Figma REST API types (vendored from the etch workspace — same crate
+# the etch_figma codegen pipeline uses, same v0.34.0 of the published
+# figma-api crate).
+figma-api = { path = "../etch/crates/figma-api-rust/figma_rest_api_file" }

@@ -1,0 +1,16 @@
+# Cargo build output
+/target/
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Rust backup
+**/*.rs.bk
+
+# Env files
+.env
+.env.local
