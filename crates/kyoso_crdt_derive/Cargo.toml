@@ -1,0 +1,19 @@
+[package]
+name = "kyoso_crdt_derive"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Proc-macros for kyoso_crdt — derive(Crdt) generates Lattice + Crdt + SchemaApply impls"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
+
+[lints]
+workspace = true

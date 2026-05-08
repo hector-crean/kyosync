@@ -1,0 +1,20 @@
+[package]
+name = "kyoso_crdt"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "CRDT replication layer for kyoso_graph: op log, diffs, server-mediated sync"
+
+[dependencies]
+kyoso_crdt_derive  = { workspace = true }
+serde              = { workspace = true }
+postcard           = { workspace = true }
+thiserror          = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true
