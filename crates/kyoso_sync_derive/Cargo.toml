@@ -1,0 +1,19 @@
+[package]
+name = "kyoso_sync_derive"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Proc-macros for kyoso_sync — derive(SchemaSync) generates the schema struct + SchemaSync impl from a Bevy component"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
+
+[lints]
+workspace = true
