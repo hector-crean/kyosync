@@ -1,0 +1,20 @@
+[package]
+name = "kyoso_graph"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Graph data + ECS infrastructure (directed graph + tree primitives, pluggable backend, solver/recipe/constraint hooks)"
+
+[dependencies]
+bevy = { workspace = true }
+petgraph = { workspace = true }
+serde = { workspace = true }
+rand = { workspace = true }
+
+[lints]
+workspace = true
+
+[[example]]
+name = "scene_tree"
+path = "examples/scene_tree.rs"

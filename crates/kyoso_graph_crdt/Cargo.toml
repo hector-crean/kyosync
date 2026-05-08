@@ -1,0 +1,21 @@
+[package]
+name = "kyoso_graph_crdt"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Graph CRDT data model: nodes, ref edges, tree shape, schema-aware document. Implements CrdtModel from kyoso_crdt."
+
+[dependencies]
+kyoso_crdt        = { workspace = true }
+kyoso_crdt_derive = { workspace = true }
+serde             = { workspace = true }
+postcard          = { workspace = true }
+thiserror         = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true
