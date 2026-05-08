@@ -1,0 +1,56 @@
+[package]
+name = "kyoso_polyline"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Enable a full app stack (windowing, input, platform) to run the examples.
+# Usage: cargo run --example basic --features app
+app = ["bevy/3d", "bevy/wayland", "dep:rand"]
+
+[dependencies]
+bevy = { workspace = true, features = [
+    # Render world
+    "bevy_render",
+    "bevy_core_pipeline",
+    # Supporting types
+    "bevy_asset",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_image",
+    "bevy_mesh",
+] }
+rand = { workspace = true, optional = true }
+bitflags = { workspace = true }
+bytemuck = { workspace = true }
+
+[lints]
+workspace = true
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
+required-features = ["app"]
+
+[[example]]
+name = "materials"
+path = "examples/materials.rs"
+required-features = ["app"]
+
+[[example]]
+name = "perspective"
+path = "examples/perspective.rs"
+required-features = ["app"]
+
+[[example]]
+name = "animated"
+path = "examples/animated.rs"
+required-features = ["app"]
+
+[[example]]
+name = "shapes"
+path = "examples/shapes.rs"
+required-features = ["app"]
