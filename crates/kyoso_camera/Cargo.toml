@@ -1,0 +1,55 @@
+[package]
+name = "kyoso_camera"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+
+[lints]
+workspace = true
+
+
+[features]
+
+[dependencies]
+bevy = { workspace = true, features = [
+    # Render world
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    # Supporting types
+    "bevy_asset",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_image",
+    "bevy_light",
+    "bevy_material",
+    "bevy_mesh",
+    "bevy_shader",
+    "bevy_log",
+    # Debug overlays (frustum interaction.rs uses Gizmos)
+    "bevy_gizmos",
+    # Interaction
+    "bevy_picking",
+    # UI node detection for picking suppression
+    "bevy_ui",
+    # State machine (ViewState in slice_camera)
+    "bevy_state",
+    # Mouse input (used by frustum interaction, rig)
+    "mouse",
+    # WESL shader format (used in sampling/*)
+    "shader_format_wesl",
+    # HDR support used by camera rig
+    "hdr",
+] }
+thiserror = { workspace = true }
+
+
+
+
+[dev-dependencies]
+bevy = { workspace = true, default-features = true }
+
+

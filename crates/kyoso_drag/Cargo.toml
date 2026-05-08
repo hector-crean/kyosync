@@ -1,0 +1,27 @@
+[package]
+name = "kyoso_drag"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bevy = { workspace = true, features = [
+    # Interaction
+    "bevy_picking",
+    # Camera / render types
+    "bevy_render",
+    "bevy_camera",
+    "bevy_color",
+    # Mouse input
+    "mouse",
+] }
+bitflags = { workspace = true }
+kyoso_camera = { workspace = true }
+
+
+[lints]
+workspace = true
+
+
