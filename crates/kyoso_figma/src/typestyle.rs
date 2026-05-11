@@ -7,7 +7,7 @@
 //! decoration, hyperlink, OpenType features, etc. are deferred.
 
 use bevy::prelude::*;
-use kyoso_sync::SchemaSync;
+use kyoso_graph_sync::SchemaSync;
 
 #[derive(Component, Clone, Debug, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]

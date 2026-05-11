@@ -8,9 +8,10 @@ license.workspace = true
 description = "Bevy-native, opinionated Figma-shaped document model + figma_api import adapter for kyoso"
 
 [dependencies]
-kyoso_sync  = { workspace = true }
-kyoso_crdt  = { workspace = true }
-kyoso_graph = { workspace = true }
+kyoso_sync       = { workspace = true }
+kyoso_graph_sync = { workspace = true }
+kyoso_crdt       = { workspace = true }
+kyoso_graph      = { workspace = true }
 
 bevy     = { workspace = true }
 serde    = { workspace = true }

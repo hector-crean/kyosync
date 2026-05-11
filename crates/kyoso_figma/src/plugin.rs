@@ -3,9 +3,10 @@
 //!
 //! Add it once at app startup with the WS server URL and room id; the
 //! plugin handles both the structural sync (`AddNode`/`Move`/etc. via
-//! `CrdtSyncPlugin<FigmaNode, FigmaEdge>`) and the typed-schema plugins
-//! for each Bevy component (`Frame`, `Rectangle`, `Text`, `TypeStyle`,
-//! `Size`, `Transform`).
+//! `GraphSyncPlugin<FigmaNode, FigmaEdge>` on top of the multi-model
+//! `SyncTransportPlugin`) and the typed-schema plugins for each Bevy
+//! component (`Frame`, `Rectangle`, `Text`, `TypeStyle`, `Size`,
+//! `Transform`).
 //!
 //! ```ignore
 //! use bevy::prelude::*;
@@ -31,7 +32,8 @@
 //! to find the right `Document<TypeStyleSchema>` instance.
 
 use bevy::prelude::*;
-use kyoso_sync::{CrdtSyncPlugin, SchemaSyncedNodeComponentPlugin};
+use kyoso_graph_sync::{GraphSyncPlugin, SchemaSyncedNodeComponentPlugin};
+use kyoso_sync::SyncTransportPlugin;
 
 use crate::{Frame, Rectangle, Size, Text, TypeStyle};
 use crate::{FigmaEdge, FigmaNode};
@@ -44,10 +46,12 @@ pub struct KyosoFigmaPlugin {
 impl Plugin for KyosoFigmaPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
-            CrdtSyncPlugin::<FigmaNode, FigmaEdge>::new(
-                self.server_url.clone(),
-                self.room.clone(),
-            ),
+            // Multi-model transport — owns the WsClient. Add this even
+            // for graph-only apps; it's the foundation that lets future
+            // model plugins (comments, presence) mount onto the same
+            // socket.
+            SyncTransportPlugin::new(self.server_url.clone(), self.room.clone()),
+            GraphSyncPlugin::<FigmaNode, FigmaEdge>::default(),
             // Field-bearing components.
             SchemaSyncedNodeComponentPlugin::<FigmaNode, FigmaEdge, Frame>::default(),
             SchemaSyncedNodeComponentPlugin::<FigmaNode, FigmaEdge, Rectangle>::default(),

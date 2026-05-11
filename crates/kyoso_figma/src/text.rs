@@ -8,7 +8,7 @@
 //! - `fills` mirror Frame/Rectangle's whole-list LWW.
 
 use bevy::prelude::*;
-use kyoso_sync::SchemaSync;
+use kyoso_graph_sync::SchemaSync;
 
 use crate::paint::Paint;
 use crate::typestyle::TypeStyle;

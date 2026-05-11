@@ -4,7 +4,7 @@
 //! (`top_left_radius`, ...) are a follow-up (plan doc Part XI §XI.7).
 
 use bevy::prelude::*;
-use kyoso_sync::SchemaSync;
+use kyoso_graph_sync::SchemaSync;
 
 use crate::paint::Paint;
 
