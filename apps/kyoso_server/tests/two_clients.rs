@@ -2,23 +2,26 @@
 //! clients, and verify ops submitted by one peer arrive at the other with
 //! a server-assigned `GlobalSeq`.
 //!
-//! This is the smoke test the architecture has to keep passing as the
-//! CRDT, persistence, and protocol layers evolve.
+//! These tests speak the multi-model envelope protocol directly. Helper
+//! functions wrap/unwrap envelopes for the graph model so each test
+//! reads at the level of "send a Submit, expect an Apply" rather than
+//! "encode an Op<OpKind> into bytes, build an Envelope::Submit, …".
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
-use kyoso_crdt::CrdtId;
-use kyoso_graph_crdt::{OpKind, Snapshot};
-
-type Op = kyoso_crdt::Op<OpKind>;
-type ClientMsg = kyoso_crdt::ClientMsg<OpKind>;
-type ServerMsg = kyoso_crdt::ServerMsg<OpKind, Snapshot>;
+use kyoso_crdt::{
+    CrdtId, EnvelopeClientMsg, EnvelopeServerMsg, GlobalSeq, ModelGreeting, PeerId, Tier,
+};
+use kyoso_graph_crdt::{OpKind, Snapshot, graph_model};
 use kyoso_server::{AppState, OpStore, RoomManager, app};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+type Op = kyoso_crdt::Op<OpKind>;
+type Diff = kyoso_crdt::Diff<OpKind>;
 
 async fn spawn_server() -> SocketAddr {
     spawn_server_with(AppState::in_memory()).await
@@ -42,9 +45,9 @@ async fn connect(
     ws
 }
 
-async fn send_client_msg<S>(
+async fn send_envelope<S>(
     ws: &mut tokio_tungstenite::WebSocketStream<S>,
-    msg: ClientMsg,
+    msg: EnvelopeClientMsg,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -52,9 +55,9 @@ async fn send_client_msg<S>(
     ws.send(WsMessage::Binary(bytes.into())).await.unwrap();
 }
 
-async fn next_server_msg<S>(
+async fn next_envelope<S>(
     ws: &mut tokio_tungstenite::WebSocketStream<S>,
-) -> ServerMsg
+) -> EnvelopeServerMsg
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -65,10 +68,105 @@ where
             .expect("stream ended")
             .expect("ws error");
         if let WsMessage::Binary(bytes) = frame {
-            return ServerMsg::decode(&bytes).expect("decode");
+            return EnvelopeServerMsg::decode(&bytes).expect("decode");
         }
         // Ignore Ping/Pong/Close that aren't the data frame we want.
     }
+}
+
+/// Send `Hello { room, models: [(graph, since)] }`.
+async fn hello_graph<S>(
+    ws: &mut tokio_tungstenite::WebSocketStream<S>,
+    room: &str,
+    since: GlobalSeq,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    send_envelope(
+        ws,
+        EnvelopeClientMsg::Hello {
+            room: room.to_string(),
+            tier: Tier::ReadWrite,
+            models: vec![(graph_model(), since)],
+        },
+    )
+    .await;
+}
+
+/// Wrap and send an `Op` for the graph model.
+async fn submit_graph_op<S>(
+    ws: &mut tokio_tungstenite::WebSocketStream<S>,
+    op: &Op,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let payload = postcard::to_allocvec(op).unwrap();
+    send_envelope(
+        ws,
+        EnvelopeClientMsg::Submit {
+            model: graph_model(),
+            payload,
+        },
+    )
+    .await;
+}
+
+/// Send `Ping { model: graph, applied_seq }`.
+async fn ping_graph<S>(
+    ws: &mut tokio_tungstenite::WebSocketStream<S>,
+    applied_seq: GlobalSeq,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    send_envelope(
+        ws,
+        EnvelopeClientMsg::Ping {
+            model: graph_model(),
+            applied_seq,
+        },
+    )
+    .await;
+}
+
+/// Decoded form of a graph welcome — the per-model snapshot + diff
+/// extracted from the envelope's [`ModelGreeting`].
+struct GraphWelcome {
+    peer: PeerId,
+    snapshot: Option<Snapshot>,
+    diff: Diff,
+}
+
+fn decode_graph_welcome(envelope: EnvelopeServerMsg) -> GraphWelcome {
+    let EnvelopeServerMsg::Welcome { peer, models, .. } = envelope else {
+        panic!("expected Welcome, got {envelope:?}");
+    };
+    let greeting = find_graph_greeting(&models);
+    let snapshot = greeting
+        .snapshot_payload
+        .as_deref()
+        .map(|b| postcard::from_bytes::<Snapshot>(b).expect("decode snapshot"));
+    let diff: Diff = postcard::from_bytes(&greeting.diff_payload).expect("decode diff");
+    GraphWelcome {
+        peer,
+        snapshot,
+        diff,
+    }
+}
+
+fn find_graph_greeting(models: &[ModelGreeting]) -> &ModelGreeting {
+    let graph = graph_model();
+    models
+        .iter()
+        .find(|g| g.model == graph)
+        .expect("Welcome must include graph greeting")
+}
+
+fn decode_graph_apply(envelope: EnvelopeServerMsg) -> Op {
+    let EnvelopeServerMsg::Apply { model, payload } = envelope else {
+        panic!("expected Apply, got {envelope:?}");
+    };
+    assert_eq!(model, graph_model());
+    postcard::from_bytes(&payload).expect("decode op")
 }
 
 #[tokio::test]
@@ -79,82 +177,45 @@ async fn two_clients_see_each_others_ops() {
     let mut bob = connect(addr).await;
 
     // Both join the same room from a fresh state.
-    send_client_msg(
-        &mut alice,
-        ClientMsg::Hello {
-            room: "demo".into(),
-            since: 0,
-        },
-    )
-    .await;
-    send_client_msg(
-        &mut bob,
-        ClientMsg::Hello {
-            room: "demo".into(),
-            since: 0,
-        },
-    )
-    .await;
+    hello_graph(&mut alice, "demo", 0).await;
+    hello_graph(&mut bob, "demo", 0).await;
 
-    let alice_welcome = next_server_msg(&mut alice).await;
-    let bob_welcome = next_server_msg(&mut bob).await;
+    let alice_welcome = decode_graph_welcome(next_envelope(&mut alice).await);
+    let bob_welcome = decode_graph_welcome(next_envelope(&mut bob).await);
 
-    let (alice_peer, bob_peer) = match (alice_welcome, bob_welcome) {
-        (
-            ServerMsg::Welcome {
-                peer: a,
-                snapshot: sa,
-                diff: da,
-                ..
-            },
-            ServerMsg::Welcome {
-                peer: b,
-                snapshot: sb,
-                diff: db,
-                ..
-            },
-        ) => {
-            assert!(sa.is_none() && sb.is_none(), "no snapshot in fresh room");
-            assert!(da.is_empty(), "fresh room should have no ops");
-            assert!(db.is_empty());
-            assert_ne!(a, b, "server must mint distinct peer ids");
-            (a, b)
-        }
-        other => panic!("expected Welcome from both, got {other:?}"),
-    };
+    assert!(
+        alice_welcome.snapshot.is_none() && bob_welcome.snapshot.is_none(),
+        "no snapshot in fresh room"
+    );
+    assert!(alice_welcome.diff.is_empty(), "fresh room should have no ops");
+    assert!(bob_welcome.diff.is_empty());
+    assert_ne!(
+        alice_welcome.peer, bob_welcome.peer,
+        "server must mint distinct peer ids"
+    );
 
     // Alice submits an AddNode using her assigned peer id.
-    let alice_op = Op::new(CrdtId::new(alice_peer, 0), OpKind::AddNode);
-    send_client_msg(&mut alice, ClientMsg::Submit(alice_op.clone())).await;
+    let alice_op = Op::new(CrdtId::new(alice_welcome.peer, 0), OpKind::AddNode);
+    submit_graph_op(&mut alice, &alice_op).await;
 
     // Both Alice and Bob should receive the op stamped with seq=1.
-    let alice_apply = next_server_msg(&mut alice).await;
-    let bob_apply = next_server_msg(&mut bob).await;
-    match (alice_apply, bob_apply) {
-        (ServerMsg::Apply(a), ServerMsg::Apply(b)) => {
-            assert_eq!(a.id, alice_op.id);
-            assert_eq!(a.seq, Some(1));
-            assert_eq!(b.id, alice_op.id);
-            assert_eq!(b.seq, Some(1));
-        }
-        other => panic!("expected Apply, got {other:?}"),
-    }
+    let alice_apply = decode_graph_apply(next_envelope(&mut alice).await);
+    let bob_apply = decode_graph_apply(next_envelope(&mut bob).await);
+    assert_eq!(alice_apply.id, alice_op.id);
+    assert_eq!(alice_apply.seq, Some(1));
+    assert_eq!(bob_apply.id, alice_op.id);
+    assert_eq!(bob_apply.seq, Some(1));
 
     // Bob now submits, observing seq=2.
-    let bob_op = Op::new(CrdtId::new(bob_peer, 0), OpKind::AddNode);
-    send_client_msg(&mut bob, ClientMsg::Submit(bob_op.clone())).await;
+    let bob_op = Op::new(CrdtId::new(bob_welcome.peer, 0), OpKind::AddNode);
+    submit_graph_op(&mut bob, &bob_op).await;
 
-    let alice_apply2 = next_server_msg(&mut alice).await;
-    let bob_apply2 = next_server_msg(&mut bob).await;
-    match (alice_apply2, bob_apply2) {
-        (ServerMsg::Apply(a), ServerMsg::Apply(b)) => {
-            assert_eq!(a.id, bob_op.id);
-            assert_eq!(a.seq, Some(2));
-            assert_eq!(b.id, bob_op.id);
-            assert_eq!(b.seq, Some(2));
-        }
-        other => panic!("expected Apply, got {other:?}"),
-    }
+    let alice_apply2 = decode_graph_apply(next_envelope(&mut alice).await);
+    let bob_apply2 = decode_graph_apply(next_envelope(&mut bob).await);
+    assert_eq!(alice_apply2.id, bob_op.id);
+    assert_eq!(alice_apply2.seq, Some(2));
+    assert_eq!(bob_apply2.id, bob_op.id);
+    assert_eq!(bob_apply2.seq, Some(2));
 }
 
 #[tokio::test]
@@ -163,54 +224,32 @@ async fn late_joiner_catches_up_via_welcome() {
 
     // First client joins and submits two ops.
     let mut early = connect(addr).await;
-    send_client_msg(
-        &mut early,
-        ClientMsg::Hello {
-            room: "late".into(),
-            since: 0,
-        },
-    )
-    .await;
-    let welcome = next_server_msg(&mut early).await;
-    let early_peer = match welcome {
-        ServerMsg::Welcome { peer, .. } => peer,
-        other => panic!("expected Welcome, got {other:?}"),
-    };
+    hello_graph(&mut early, "late", 0).await;
+    let early_welcome = decode_graph_welcome(next_envelope(&mut early).await);
+    let early_peer = early_welcome.peer;
     for i in 0..2 {
-        send_client_msg(
+        submit_graph_op(
             &mut early,
-            ClientMsg::Submit(Op::new(CrdtId::new(early_peer, i), OpKind::AddNode)),
+            &Op::new(CrdtId::new(early_peer, i), OpKind::AddNode),
         )
         .await;
         // Drain the echoed Apply so the test stays in sync.
-        let _ = next_server_msg(&mut early).await;
+        let _ = next_envelope(&mut early).await;
     }
 
     // Second client joins late: Welcome should already include the two
     // ops in `diff`.
     let mut late_joiner = connect(addr).await;
-    send_client_msg(
-        &mut late_joiner,
-        ClientMsg::Hello {
-            room: "late".into(),
-            since: 0,
-        },
-    )
-    .await;
-    let welcome = next_server_msg(&mut late_joiner).await;
-    match welcome {
-        ServerMsg::Welcome { diff, snapshot, .. } => {
-            // No periodic snapshot has run yet, so the late joiner just
-            // gets the full op tail.
-            assert!(snapshot.is_none(), "no snapshot expected without scheduler");
-            assert_eq!(diff.from_seq, 0);
-            assert_eq!(diff.to_seq, 2);
-            assert_eq!(diff.ops.len(), 2);
-            assert_eq!(diff.ops[0].seq, Some(1));
-            assert_eq!(diff.ops[1].seq, Some(2));
-        }
-        other => panic!("expected Welcome, got {other:?}"),
-    }
+    hello_graph(&mut late_joiner, "late", 0).await;
+    let welcome = decode_graph_welcome(next_envelope(&mut late_joiner).await);
+    // No periodic snapshot has run yet, so the late joiner just gets the
+    // full op tail.
+    assert!(welcome.snapshot.is_none(), "no snapshot expected without scheduler");
+    assert_eq!(welcome.diff.from_seq, 0);
+    assert_eq!(welcome.diff.to_seq, 2);
+    assert_eq!(welcome.diff.ops.len(), 2);
+    assert_eq!(welcome.diff.ops[0].seq, Some(1));
+    assert_eq!(welcome.diff.ops[1].seq, Some(2));
 }
 
 #[tokio::test]
@@ -224,25 +263,15 @@ async fn welcome_uses_snapshot_after_periodic_take() {
 
     // First client connects and submits some ops.
     let mut early = connect(addr).await;
-    send_client_msg(
-        &mut early,
-        ClientMsg::Hello {
-            room: "snapshot-room".into(),
-            since: 0,
-        },
-    )
-    .await;
-    let early_peer = match next_server_msg(&mut early).await {
-        ServerMsg::Welcome { peer, .. } => peer,
-        other => panic!("expected Welcome, got {other:?}"),
-    };
+    hello_graph(&mut early, "snapshot-room", 0).await;
+    let early_peer = decode_graph_welcome(next_envelope(&mut early).await).peer;
     for i in 0..3 {
-        send_client_msg(
+        submit_graph_op(
             &mut early,
-            ClientMsg::Submit(Op::new(CrdtId::new(early_peer, i), OpKind::AddNode)),
+            &Op::new(CrdtId::new(early_peer, i), OpKind::AddNode),
         )
         .await;
-        let _ = next_server_msg(&mut early).await; // drain echoed Apply
+        let _ = next_envelope(&mut early).await; // drain echoed Apply
     }
 
     // Force a snapshot via the room handle (would normally happen via
@@ -252,32 +281,26 @@ async fn welcome_uses_snapshot_after_periodic_take() {
         .get_or_create("snapshot-room")
         .await
         .expect("room");
-    let snap = room.take_snapshot().await.expect("snapshot");
+    // Per-handler dispatch — fans out across every model. Comments has
+    // no snapshots (default no-op), graph persists into `store`.
+    room.take_snapshot_all().await;
+    let snap = store
+        .latest_snapshot(&"snapshot-room".into())
+        .await
+        .expect("store ok")
+        .expect("graph snapshot persisted");
     assert_eq!(snap.at_seq, 3);
     assert_eq!(snap.nodes.len(), 3);
 
     // A late joiner with `since: 0` should now receive the snapshot
     // (cheaper than replaying all 3 ops from scratch).
     let mut late = connect(addr).await;
-    send_client_msg(
-        &mut late,
-        ClientMsg::Hello {
-            room: "snapshot-room".into(),
-            since: 0,
-        },
-    )
-    .await;
-    match next_server_msg(&mut late).await {
-        ServerMsg::Welcome {
-            snapshot, diff, ..
-        } => {
-            let s = snapshot.expect("snapshot delivered");
-            assert_eq!(s.at_seq, 3);
-            // Diff is empty — the snapshot already covers everything.
-            assert!(diff.is_empty());
-        }
-        other => panic!("expected Welcome, got {other:?}"),
-    }
+    hello_graph(&mut late, "snapshot-room", 0).await;
+    let welcome = decode_graph_welcome(next_envelope(&mut late).await);
+    let s = welcome.snapshot.expect("snapshot delivered");
+    assert_eq!(s.at_seq, 3);
+    // Diff is empty — the snapshot already covers everything.
+    assert!(welcome.diff.is_empty());
 }
 
 #[tokio::test]
@@ -291,42 +314,34 @@ async fn ping_ack_drives_compaction_threshold() {
     let rooms: Arc<RoomManager> = state.rooms.clone();
 
     let mut alice = connect(addr).await;
-    send_client_msg(
-        &mut alice,
-        ClientMsg::Hello {
-            room: "gc-room".into(),
-            since: 0,
-        },
-    )
-    .await;
-    let alice_peer = match next_server_msg(&mut alice).await {
-        ServerMsg::Welcome { peer, .. } => peer,
-        other => panic!("expected Welcome, got {other:?}"),
-    };
+    hello_graph(&mut alice, "gc-room", 0).await;
+    let alice_peer = decode_graph_welcome(next_envelope(&mut alice).await).peer;
     for i in 0..4 {
-        send_client_msg(
+        submit_graph_op(
             &mut alice,
-            ClientMsg::Submit(Op::new(CrdtId::new(alice_peer, i), OpKind::AddNode)),
+            &Op::new(CrdtId::new(alice_peer, i), OpKind::AddNode),
         )
         .await;
-        let _ = next_server_msg(&mut alice).await;
+        let _ = next_envelope(&mut alice).await;
     }
 
     // Take a snapshot at seq=4 — without it, GC has nothing to compact
     // against.
     let room = rooms.get_or_create("gc-room").await.expect("room");
-    room.take_snapshot().await.expect("snapshot");
+    room.take_snapshot_all().await;
 
     // Alice acks she's seen seq=4.
-    send_client_msg(&mut alice, ClientMsg::Ping { applied_seq: 4 }).await;
-    match next_server_msg(&mut alice).await {
-        ServerMsg::Pong => {}
+    ping_graph(&mut alice, 4).await;
+    match next_envelope(&mut alice).await {
+        EnvelopeServerMsg::Pong => {}
         other => panic!("expected Pong, got {other:?}"),
     }
 
-    // Run one GC cycle. min_ack=4, snapshot_seq=4, so upper=4.
-    let dropped = room.run_gc().await.expect("gc");
-    assert_eq!(dropped, 4, "all four ops should be compacted");
+    // Run one GC cycle. min_ack=4, snapshot_seq=4, so upper=4. The
+    // total covers every handler — comments contributes 0 (no GC),
+    // graph drops 4.
+    let dropped = room.run_gc_all().await;
+    assert_eq!(dropped, 4, "all four graph ops should be compacted");
 
     // Verify the underlying store no longer has those ops below 4.
     let head = store.head(&"gc-room".into()).await.unwrap();
@@ -345,15 +360,8 @@ async fn disconnect_clears_peer_ack() {
     let addr = spawn_server_with(state.clone()).await;
 
     let mut alice = connect(addr).await;
-    send_client_msg(
-        &mut alice,
-        ClientMsg::Hello {
-            room: "disc-room".into(),
-            since: 0,
-        },
-    )
-    .await;
-    let _ = next_server_msg(&mut alice).await;
+    hello_graph(&mut alice, "disc-room", 0).await;
+    let _ = next_envelope(&mut alice).await;
 
     // Confirm an ack row exists.
     assert_eq!(
@@ -379,19 +387,12 @@ async fn disconnect_clears_peer_ack() {
 async fn ping_replies_pong() {
     let addr = spawn_server().await;
     let mut ws = connect(addr).await;
-    send_client_msg(
-        &mut ws,
-        ClientMsg::Hello {
-            room: "ping-test".into(),
-            since: 0,
-        },
-    )
-    .await;
-    let _welcome = next_server_msg(&mut ws).await;
+    hello_graph(&mut ws, "ping-test", 0).await;
+    let _welcome = next_envelope(&mut ws).await;
 
-    send_client_msg(&mut ws, ClientMsg::Ping { applied_seq: 0 }).await;
-    match next_server_msg(&mut ws).await {
-        ServerMsg::Pong => {}
+    ping_graph(&mut ws, 0).await;
+    match next_envelope(&mut ws).await {
+        EnvelopeServerMsg::Pong => {}
         other => panic!("expected Pong, got {other:?}"),
     }
 }

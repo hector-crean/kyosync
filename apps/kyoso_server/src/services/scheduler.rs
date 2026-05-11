@@ -2,24 +2,22 @@
 //!
 //! Two periodic tasks, both spawned at startup and tied to the lifetime
 //! of [`AppState`]. They iterate over all live rooms (those with at
-//! least one prior snapshot/restore via the room manager) and run their
-//! respective passes.
+//! least one prior snapshot/restore via the room manager) and call the
+//! per-model fan-out methods.
 //!
 //! ## Snapshot scheduler
 //!
 //! Every [`SchedulerConfig::snapshot_interval`] the worker calls
-//! [`Room::take_snapshot`] on each live room. Snapshots are cheap
-//! (in-memory traversal of the mirror's HashMaps + a postcard encode +
-//! one INSERT) so we don't bother gating on "ops since last snapshot".
-//! At rest, taking duplicate snapshots is a no-op insert.
+//! [`Room::take_snapshot_all`] on each live room, which delegates to
+//! every registered [`RoomModelHandler`]. Models that don't snapshot
+//! (default trait impl, e.g. comments) are no-ops.
 //!
 //! ## GC scheduler
 //!
 //! Every [`SchedulerConfig::gc_interval`] the worker calls
-//! [`Room::run_gc`] on each live room. The compaction threshold is
-//! `min(min_ack, latest_snapshot.at_seq)` so we never drop ops that
-//! either (a) some peer hasn't acked yet or (b) aren't yet recoverable
-//! from a persisted snapshot.
+//! [`Room::run_gc_all`] on each live room. Per-handler GC: graph
+//! compacts ops below `min(min_ack, latest_snapshot.at_seq)`; comments
+//! is currently a no-op (no compaction in v1).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,14 +57,8 @@ async fn snapshot_loop(rooms: Arc<RoomManager>, every: Duration) {
     loop {
         tick.tick().await;
         for room in rooms.live_rooms() {
-            match room.take_snapshot().await {
-                Ok(snap) => {
-                    tracing::debug!(room = %room.id, at_seq = snap.at_seq, "snapshot taken")
-                }
-                Err(e) => {
-                    tracing::warn!(room = %room.id, error = %e, "snapshot failed")
-                }
-            }
+            room.take_snapshot_all().await;
+            tracing::debug!(room = %room.id, "snapshot pass complete");
         }
     }
 }
@@ -78,10 +70,9 @@ async fn gc_loop(rooms: Arc<RoomManager>, every: Duration) {
     loop {
         tick.tick().await;
         for room in rooms.live_rooms() {
-            match room.run_gc().await {
-                Ok(0) => {}
-                Ok(n) => tracing::info!(room = %room.id, ops_dropped = n, "compacted"),
-                Err(e) => tracing::warn!(room = %room.id, error = %e, "compaction failed"),
+            let dropped = room.run_gc_all().await;
+            if dropped > 0 {
+                tracing::info!(room = %room.id, ops_dropped = dropped, "compacted");
             }
         }
     }

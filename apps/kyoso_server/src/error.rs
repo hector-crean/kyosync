@@ -21,6 +21,9 @@ pub enum AppError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
+
     #[error("postcard codec: {0}")]
     Codec(#[from] postcard::Error),
 
@@ -42,6 +45,7 @@ impl IntoResponse for AppError {
             AppError::BadRequest(m) => (StatusCode::BAD_REQUEST, m.clone()),
             AppError::NotFound(m) => (StatusCode::NOT_FOUND, m.clone()),
             AppError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
+            AppError::PermissionDenied(m) => (StatusCode::FORBIDDEN, m.clone()),
             AppError::Codec(_) => (StatusCode::BAD_REQUEST, "malformed frame".into()),
             AppError::Io(_) | AppError::Internal(_) => {
                 tracing::error!(error = %self, "internal server error");

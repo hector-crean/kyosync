@@ -1,180 +1,175 @@
-//! [`Room`] — one CRDT-replicated document with all its connected peers.
+//! [`Room`] — one collaboration boundary, multiple per-model handlers.
 //!
-//! Backed by an [`OpStore`] (in-memory or postgres). On construction the
-//! room restores its server-side **mirror** ([`CrdtBackend`]) from the
-//! most recent persisted snapshot plus any ops since, so that snapshot
-//! generation is a cheap in-memory operation rather than a full replay
-//! of the persistent log.
+//! Post per-model-handler refactor `Room` is a thin router:
 //!
-//! Concurrency:
+//! - **`handlers`** — `HashMap<ModelId, Arc<dyn RoomModelHandler>>`
+//!   built by [`RoomManager::get_or_create`] from the
+//!   [`HandlerFactory`] list in [`crate::AppState`]. Each handler owns
+//!   its model's storage, mirror, append-lock, and snapshot policy.
+//! - **`broadcast`** — multi-model fan-out. Per-handler `submit`
+//!   returns the encoded `Apply` payload; `Room` wraps it in
+//!   [`EnvelopeServerMsg::Apply`] and broadcasts.
+//! - **`presence`** — model-agnostic. Lives at the room level because
+//!   presence isn't per-model (a peer is "in the room", not "in the
+//!   graph model"). Bypasses every handler.
+//! - **`next_peer`** — room-wide peer-id assignment, model-agnostic.
 //!
-//! - `append_lock` serialises [`Room::submit`] across concurrent
-//!   submitters so seq assignment + mirror update + broadcast happen as
-//!   one logical step.
-//! - `mirror` itself is a `Mutex` so background workers (snapshot
-//!   scheduler) can read state without contending with submit.
-//! - `broadcast` is the standard tokio fan-out channel; per-connection
-//!   tasks subscribe once and run independently.
+//! The graph and comments fields, locks, and per-model methods that
+//! used to live here have all moved to [`crate::services::handlers`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use dashmap::DashMap;
-use kyoso_crdt::{CrdtModel, GlobalSeq, PeerId, RoomId};
-use kyoso_graph_crdt::CrdtBackend;
+use kyoso_crdt::{EnvelopeServerMsg, GlobalSeq, ModelGreeting, ModelId, PeerId, RoomId, Tier};
 use tokio::sync::{Mutex, broadcast};
 
 use crate::error::{AppError, Result};
-use crate::model::{Diff, Op, ServerMsg, ServerModel, Snapshot};
-use crate::services::store::OpStore;
+use crate::services::handler::{HandlerFactory, RoomModelHandler};
 
 const BROADCAST_CAPACITY: usize = 256;
 
-/// Mirror node/edge attribute type. The server doesn't care about
-/// consumer-side attribute components — only topology, tree-shape, and
-/// snapshots. `()` satisfies the `Debug + Send + Sync + 'static` bounds
-/// without dragging in any consumer types.
-type ServerMirror = CrdtBackend<(), ()>;
-
 pub struct Room {
     pub id: RoomId,
-    store: OpStore,
-    mirror: Mutex<ServerMirror>,
-    append_lock: Mutex<()>,
-    broadcast: broadcast::Sender<ServerMsg>,
+    handlers: HashMap<ModelId, Arc<dyn RoomModelHandler>>,
+    broadcast: broadcast::Sender<EnvelopeServerMsg>,
     next_peer: AtomicU32,
     /// Ephemeral per-peer presence/awareness state. `Vec<u8>` is opaque
     /// — consumers postcard-encode their own struct. Cleared on peer
-    /// disconnect; never persisted to the op log.
+    /// disconnect; never persisted, model-agnostic.
     presence: Mutex<HashMap<PeerId, Vec<u8>>>,
 }
 
 impl Room {
-    /// Restore room state from the persistent store and return a ready
-    /// `Room`. Does:
-    ///
-    /// 1. `ensure_room` (no-op if it already exists).
-    /// 2. Hydrate the mirror from the latest snapshot, if any.
-    /// 3. Apply every op since the snapshot to bring the mirror to head.
-    pub async fn restore(id: RoomId, store: OpStore) -> Result<Self> {
-        store.ensure_room(&id).await?;
-        let mut mirror = ServerMirror::with_peer(0); // server peer is reserved as 0
-        if let Some(snap) = store.latest_snapshot(&id).await? {
-            mirror.restore(snap);
-        }
-        let head = store.head(&id).await?;
-        let from = mirror.applied_seq();
-        if head > from {
-            let ops = store.slice(&id, from, head).await?;
-            for op in &ops {
-                mirror
-                    .apply_remote(op)
-                    .map_err(|e| AppError::Internal(format!("mirror replay {}: {e}", &id)))?;
-            }
-        }
-
+    /// Construct a room hosting the given pre-built handlers. Typically
+    /// called by [`RoomManager::get_or_create`] after iterating the
+    /// app's [`HandlerFactory`] list.
+    pub fn from_handlers(id: RoomId, handlers: Vec<Arc<dyn RoomModelHandler>>) -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
-        Ok(Self {
+        let handlers = handlers
+            .into_iter()
+            .map(|h| (h.model_id(), h))
+            .collect();
+        Self {
             id,
-            store,
-            mirror: Mutex::new(mirror),
-            append_lock: Mutex::new(()),
+            handlers,
             broadcast: tx,
             next_peer: AtomicU32::new(1),
             presence: Mutex::new(HashMap::new()),
-        })
+        }
+    }
+
+    /// Run every registered factory and assemble a fresh room. Hook
+    /// for [`RoomManager::get_or_create`].
+    pub async fn restore(
+        id: RoomId,
+        factories: &[Box<dyn HandlerFactory>],
+    ) -> Result<Self> {
+        let mut handlers = Vec::with_capacity(factories.len());
+        for factory in factories {
+            handlers.push(factory.build(&id).await?);
+        }
+        Ok(Self::from_handlers(id, handlers))
     }
 
     pub fn assign_peer(&self) -> PeerId {
         self.next_peer.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<ServerMsg> {
+    pub fn subscribe(&self) -> broadcast::Receiver<EnvelopeServerMsg> {
         self.broadcast.subscribe()
     }
 
-    pub async fn head(&self) -> Result<GlobalSeq> {
-        self.store.head(&self.id).await
+    /// True if this room has a handler registered for `model`.
+    #[must_use]
+    pub fn has_model(&self, model: &ModelId) -> bool {
+        self.handlers.contains_key(model)
     }
 
-    /// Append `op` to the durable log, fold it into the server-side
-    /// mirror, and broadcast to every subscribed peer.
-    pub async fn submit(&self, op: Op) -> Result<Op> {
-        let _guard = self.append_lock.lock().await;
-        let stamped = self.store.append(&self.id, op).await?;
-        self.mirror
-            .lock()
-            .await
-            .apply_remote(&stamped)
-            .map_err(|e| AppError::Internal(format!("mirror apply {}: {e}", &self.id)))?;
-        let subscribers = self
-            .broadcast
-            .send(ServerMsg::Apply(stamped.clone()))
-            .unwrap_or(0);
-        tracing::debug!(
-            room = %self.id,
-            seq = stamped.seq,
-            peer = stamped.id.peer,
-            kind = op_kind_label(&stamped),
-            subscribers,
-            "op appended"
-        );
-        Ok(stamped)
-    }
+    // -----------------------------------------------------------------
+    // Per-model dispatch — the router fits in three methods.
+    // -----------------------------------------------------------------
 
-    /// Materialise everything a client needs to bridge from `since` to
-    /// `head`. Returns `(Option<Snapshot>, Diff)`:
-    ///
-    /// - If a snapshot newer than `since` is available, hand it back; the
-    ///   diff is then ops `(snapshot.at_seq, head]`.
-    /// - Otherwise just hand back ops `(since, head]`.
-    pub async fn welcome_for(&self, since: GlobalSeq) -> Result<(Option<Snapshot>, Diff)> {
-        let head = self.store.head(&self.id).await?;
-        if head == 0 || head == since {
-            return Ok((None, Diff::empty(head)));
+    /// Forward a `Submit` payload to the handler for `model`, then
+    /// broadcast the encoded `Apply` payload it returns. The handler's
+    /// own [`RoomModelHandler::allows_submit`] gates the submit by the
+    /// connection's `tier` — a `Tier::Read` connection trying to
+    /// submit a graph op gets [`AppError::PermissionDenied`].
+    pub async fn submit(
+        &self,
+        model: &ModelId,
+        tier: Tier,
+        payload: Vec<u8>,
+    ) -> Result<()> {
+        let handler = self.lookup(model)?;
+        if !handler.allows_submit(tier, &payload) {
+            return Err(AppError::PermissionDenied(format!(
+                "tier {tier:?} cannot submit to model {model}"
+            )));
         }
-        let snap = self.store.latest_snapshot(&self.id).await?;
-        match snap {
-            Some(s) if s.at_seq > since => {
-                let ops = self.store.slice(&self.id, s.at_seq, head).await?;
-                let diff = Diff {
-                    from_seq: s.at_seq,
-                    to_seq: head,
-                    ops,
-                };
-                Ok((Some(s), diff))
-            }
-            _ => {
-                let ops = self.store.slice(&self.id, since, head).await?;
-                let diff = Diff {
-                    from_seq: since,
-                    to_seq: head,
-                    ops,
-                };
-                Ok((None, diff))
-            }
+        let apply_payload = handler.submit(payload).await?;
+        let _ = self.broadcast.send(EnvelopeServerMsg::Apply {
+            model: model.clone(),
+            payload: apply_payload,
+        });
+        Ok(())
+    }
+
+    /// Build the per-model greeting list for a `Welcome`. `models` is
+    /// the `Hello.models` list the client sent — `(ModelId, since)`
+    /// pairs.
+    pub async fn welcome_for(
+        &self,
+        models: &[(ModelId, GlobalSeq)],
+    ) -> Result<Vec<ModelGreeting>> {
+        let mut out = Vec::with_capacity(models.len());
+        for (model, since) in models {
+            let handler = self.lookup(model)?;
+            let (snapshot_payload, diff_payload) = handler.welcome_for(*since).await?;
+            out.push(ModelGreeting {
+                model: model.clone(),
+                snapshot_payload,
+                diff_payload,
+            });
         }
+        Ok(out)
     }
 
-    pub async fn catchup(&self, since: GlobalSeq) -> Result<Diff> {
-        let head = self.store.head(&self.id).await?;
-        let ops = self.store.slice(&self.id, since, head).await?;
-        Ok(Diff {
-            from_seq: since,
-            to_seq: head,
-            ops,
-        })
+    pub async fn catchup(&self, model: &ModelId, since: GlobalSeq) -> Result<Vec<u8>> {
+        self.lookup(model)?.catchup(since).await
     }
 
-    pub async fn record_ack(&self, peer: PeerId, applied_seq: GlobalSeq) -> Result<()> {
-        self.store.record_ack(&self.id, peer, applied_seq).await
+    pub async fn record_ack(
+        &self,
+        model: &ModelId,
+        peer: PeerId,
+        applied_seq: GlobalSeq,
+    ) -> Result<()> {
+        // Models without compaction silently no-op via the trait
+        // default. Unknown model is still an error.
+        self.lookup(model)?.record_ack(peer, applied_seq).await
     }
 
+    /// Disconnect cleanup: tell every handler to drop the peer's ack
+    /// row and clear room-wide presence.
     pub async fn release_peer(&self, peer: PeerId) -> Result<()> {
+        for handler in self.handlers.values() {
+            handler.release_peer(peer).await?;
+        }
         self.clear_presence(peer).await;
-        self.store.clear_peer(&self.id, peer).await
+        Ok(())
     }
+
+    fn lookup(&self, model: &ModelId) -> Result<&Arc<dyn RoomModelHandler>> {
+        self.handlers
+            .get(model)
+            .ok_or_else(|| AppError::Internal(format!("unknown model: {model}")))
+    }
+
+    // -----------------------------------------------------------------
+    // Presence — model-agnostic, lives at the room level.
+    // -----------------------------------------------------------------
 
     /// Replace `peer`'s presence entry and broadcast the update.
     /// Bypasses the op log entirely — presence is ephemeral, in-memory,
@@ -183,7 +178,7 @@ impl Room {
         self.presence.lock().await.insert(peer, state.clone());
         let _ = self
             .broadcast
-            .send(ServerMsg::PresenceUpdate { peer, state });
+            .send(EnvelopeServerMsg::PresenceUpdate { peer, state });
     }
 
     /// Remove `peer` from the presence map and broadcast the departure.
@@ -191,12 +186,15 @@ impl Room {
     pub async fn clear_presence(&self, peer: PeerId) {
         let removed = self.presence.lock().await.remove(&peer).is_some();
         if removed {
-            let _ = self.broadcast.send(ServerMsg::PresenceLeft { peer });
+            let _ = self
+                .broadcast
+                .send(EnvelopeServerMsg::PresenceLeft { peer });
         }
     }
 
-    /// Snapshot of the current presence map. Sent inside [`ServerMsg::Welcome`]
-    /// so a joining peer can hydrate its UI without a round-trip.
+    /// Snapshot of the current presence map. Sent inside the welcome
+    /// envelope so a joining peer can hydrate its UI without a
+    /// round-trip.
     pub async fn presence_snapshot(&self) -> Vec<(PeerId, Vec<u8>)> {
         self.presence
             .lock()
@@ -206,44 +204,47 @@ impl Room {
             .collect()
     }
 
-    /// Take a snapshot of the current mirror and persist it. Returns the
-    /// snapshot for callers that want to log or broadcast the cut.
-    pub async fn take_snapshot(&self) -> Result<Snapshot> {
-        let snap = self.mirror.lock().await.snapshot();
-        self.store.save_snapshot(&self.id, &snap).await?;
-        Ok(snap)
+    // -----------------------------------------------------------------
+    // Scheduler hooks — fan out across every handler.
+    // -----------------------------------------------------------------
+
+    /// Take a snapshot for every handler. Models that don't snapshot
+    /// (default trait impl) are no-ops. Errors from individual handlers
+    /// are logged but don't abort the loop — one model's GC failure
+    /// shouldn't take down a sibling model's snapshot.
+    pub async fn take_snapshot_all(&self) {
+        for (model, handler) in &self.handlers {
+            if let Err(e) = handler.take_snapshot().await {
+                tracing::warn!(room = %self.id, %model, error = %e, "take_snapshot failed");
+            }
+        }
     }
 
-    /// Run one round of compaction: drop ops below
-    /// `min(min_ack across connected peers, latest snapshot.at_seq)`.
-    /// Returns the number of ops removed (`0` if no compaction was
-    /// performed because either no peers are connected or no snapshot
-    /// has been taken yet).
-    pub async fn run_gc(&self) -> Result<u64> {
-        let min_ack = self.store.min_ack(&self.id).await?;
-        let Some(min_ack) = min_ack else { return Ok(0) };
-        let snap_seq = self
-            .store
-            .latest_snapshot(&self.id)
-            .await?
-            .map_or(0, |s| s.at_seq);
-        let upper = min_ack.min(snap_seq);
-        if upper == 0 {
-            return Ok(0);
+    /// Run GC for every handler; return the total number of ops
+    /// dropped across all models (for telemetry).
+    pub async fn run_gc_all(&self) -> u64 {
+        let mut total = 0;
+        for (model, handler) in &self.handlers {
+            match handler.run_gc().await {
+                Ok(n) => total += n,
+                Err(e) => {
+                    tracing::warn!(room = %self.id, %model, error = %e, "run_gc failed");
+                }
+            }
         }
-        self.store.compact_below(&self.id, upper).await
+        total
     }
 }
 
 pub struct RoomManager {
-    store: OpStore,
+    factories: Arc<Vec<Box<dyn HandlerFactory>>>,
     rooms: DashMap<RoomId, Arc<Room>>,
 }
 
 impl RoomManager {
-    pub fn new(store: OpStore) -> Self {
+    pub fn new(factories: Arc<Vec<Box<dyn HandlerFactory>>>) -> Self {
         Self {
-            store,
+            factories,
             rooms: DashMap::new(),
         }
     }
@@ -255,7 +256,7 @@ impl RoomManager {
         if let Some(existing) = self.rooms.get(id) {
             return Ok(existing.clone());
         }
-        let room = Arc::new(Room::restore(id.to_string(), self.store.clone()).await?);
+        let room = Arc::new(Room::restore(id.to_string(), &self.factories).await?);
         let stored = self
             .rooms
             .entry(id.to_string())
@@ -272,16 +273,10 @@ impl RoomManager {
         self.rooms.len()
     }
 
-    pub fn store(&self) -> &OpStore {
-        &self.store
+    /// The startup-time factory list. Useful for tests that want to
+    /// peek at which models the server hosts.
+    #[must_use]
+    pub fn factories(&self) -> &[Box<dyn HandlerFactory>] {
+        &self.factories
     }
-}
-
-/// Stable label for an op variant, used in tracing fields.
-///
-/// Delegates to the configured [`ServerModel`]'s `op_kind_label` impl
-/// so it stays accurate when [`crate::model::ServerModel`] is swapped
-/// for a different CRDT.
-fn op_kind_label(op: &Op) -> &'static str {
-    <ServerModel as CrdtModel>::op_kind_label(op)
 }
