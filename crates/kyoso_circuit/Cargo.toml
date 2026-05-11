@@ -1,0 +1,22 @@
+[package]
+name = "kyoso_circuit"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy-native analogue-circuit document model for kyoso — typed components (resistor/capacitor/inductor/voltage-source/ground) and typed edge categories (wire/same-net/differential-pair) on top of the kyoso graph CRDT"
+
+[dependencies]
+kyoso_sync       = { workspace = true }
+kyoso_graph_sync = { workspace = true }
+kyoso_crdt       = { workspace = true }
+kyoso_graph_crdt = { workspace = true }
+kyoso_graph      = { workspace = true }
+
+bevy    = { workspace = true }
+serde   = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

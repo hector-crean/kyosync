@@ -1,0 +1,38 @@
+[package]
+name = "kyoso_circuit_client"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Kyoso analogue-circuit visual client — Bevy app with CRDT-replicated circuit graph and a Duplex command bus"
+
+[dependencies]
+kyoso_graph      = { workspace = true }
+kyoso_crdt       = { workspace = true }
+kyoso_graph_crdt = { workspace = true }
+kyoso_sync       = { workspace = true }
+kyoso_graph_sync = { workspace = true }
+kyoso_circuit    = { workspace = true }
+kyoso_drag       = { workspace = true }
+kyoso_camera     = { workspace = true }
+
+bevy              = { workspace = true, features = ["default"] }
+crossbeam-channel = { workspace = true }
+postcard          = { workspace = true }
+serde             = { workspace = true }
+tracing           = { workspace = true }
+once_cell         = { workspace = true }
+strum             = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+kyoso_server = { workspace = true }
+tokio        = { workspace = true }
+axum         = { workspace = true }
+
+[[bin]]
+name = "kyoso_circuit_client"
+path = "src/bin/kyoso_circuit_client.rs"
