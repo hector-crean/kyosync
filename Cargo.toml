@@ -27,6 +27,10 @@ kyoso_graph = { path = "crates/kyoso_graph" }
 kyoso_crdt = { path = "crates/kyoso_crdt" }
 kyoso_crdt_derive = { path = "crates/kyoso_crdt_derive" }
 kyoso_graph_crdt = { path = "crates/kyoso_graph_crdt" }
+kyoso_graph_sync = { path = "crates/kyoso_graph_sync" }
+kyoso_comments_crdt = { path = "crates/kyoso_comments_crdt" }
+kyoso_comments_sync = { path = "crates/kyoso_comments_sync" }
+kyoso_loadgen = { path = "crates/kyoso_loadgen" }
 kyoso_server = { path = "apps/kyoso_server" }
 kyoso_sync = { path = "crates/kyoso_sync" }
 kyoso_sync_derive = { path = "crates/kyoso_sync_derive" }
@@ -35,6 +39,8 @@ kyoso_camera = { path = "crates/kyoso_camera" }
 kyoso_drag = { path = "crates/kyoso_drag" }
 kyoso_polyline = { path = "crates/kyoso_polyline" }
 kyoso_client = { path = "apps/kyoso_client" }
+kyoso_circuit = { path = "crates/kyoso_circuit" }
+kyoso_circuit_client = { path = "apps/kyoso_circuit_client" }
 
 # ── Bevy ───────────────────────────────────────────────────────────────────────
 # `default-features = false` lets each crate opt in to exactly the Bevy features
@@ -95,6 +101,11 @@ petgraph = "0.6.5"
 
 # Test-only: property-based testing
 proptest = "1.5"
+
+# Bench-harness: criterion benchmarks + HDR histograms for loadgen latency.
+criterion     = { version = "0.5", features = ["html_reports"] }
+hdrhistogram  = "7.5"
+clap          = { version = "4.5", features = ["derive"] }
 
 # Figma REST API types (vendored from the etch workspace — same crate
 # the etch_figma codegen pipeline uses, same v0.34.0 of the published
