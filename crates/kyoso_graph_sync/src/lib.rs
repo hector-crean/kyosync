@@ -1,0 +1,47 @@
+//! Graph-specific Bevy ↔ CRDT bridge.
+//!
+//! Sits on top of [`kyoso_sync::SyncTransportPlugin`] and registers the
+//! graph model with the multi-model transport. Owns the graph
+//! [`ClientSyncEngine`], the structural detection systems, the inbound
+//! projector, the per-category edge dispatch ([`SyncedEdgeCategoryPlugin`]),
+//! and the typed schema sync framework
+//! ([`SchemaSyncedNodeComponentPlugin`] etc.).
+//!
+//! Add [`SyncTransportPlugin`](kyoso_sync::SyncTransportPlugin) first,
+//! then [`GraphSyncPlugin`]:
+//!
+//! ```ignore
+//! use bevy::prelude::*;
+//! use kyoso_sync::SyncTransportPlugin;
+//! use kyoso_graph_sync::GraphSyncPlugin;
+//!
+//! #[derive(Component, Default, Debug, Clone)]
+//! struct SceneNode;
+//! #[derive(Component, Default, Debug, Clone, Copy)]
+//! struct SceneEdge;
+//!
+//! App::new()
+//!     .add_plugins(SyncTransportPlugin::new("ws://localhost:7878/ws", "demo"))
+//!     .add_plugins(GraphSyncPlugin::<SceneNode, SceneEdge>::default())
+//!     .run();
+//! ```
+
+pub mod builtin_schemas;
+pub mod category;
+pub mod engine;
+pub mod index;
+pub mod plugin;
+pub mod schema_sync;
+
+pub use builtin_schemas::TransformSchema;
+pub use category::{EdgeCategoryMarker, EdgeCategoryProjectors, SyncedEdgeCategoryPlugin};
+pub use engine::ClientSyncEngine;
+pub use index::EntityCrdtIndex;
+pub use plugin::{GraphSyncPlugin, RemoteOpApplied, Syncable};
+pub use schema_sync::{
+    SchemaDoc, SchemaField, SchemaSync, SchemaSyncedEdgeComponentPlugin,
+    SchemaSyncedNodeComponentPlugin,
+};
+
+// Re-export the derive macro alongside the trait.
+pub use kyoso_sync_derive::SchemaSync;
