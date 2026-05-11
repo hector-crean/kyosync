@@ -35,6 +35,7 @@
 
 pub mod context;
 pub mod delta;
+pub mod envelope;
 pub mod id;
 pub mod lattice;
 pub mod log;
@@ -46,7 +47,8 @@ pub mod types;
 
 pub use context::{CausalContext, CausalState, Dot, SubDot};
 pub use delta::{Path, PathSegment, WireDelta};
-pub use id::{CrdtId, GlobalSeq, IdGenerator, LocalSeq, PeerId};
+pub use envelope::{EnvelopeClientMsg, EnvelopeServerMsg, ModelGreeting, ModelId, Tier};
+pub use id::{CrdtId, GlobalSeq, IdGen, IdGenerator, LocalSeq, PeerId};
 pub use lattice::{Crdt, DeltaError, Lattice};
 pub use log::{InMemoryOpLog, OpLogRead, OpLogWrite};
 pub use model::{ApplyError, CrdtModel};
