@@ -1,0 +1,52 @@
+[package]
+name = "kyoso_loadgen"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "WebSocket load generator + latency harness for kyoso_server. Drives N concurrent envelope-protocol clients, records per-op submit-to-echo latency, emits JSON for the bench harness."
+
+[dependencies]
+kyoso_crdt          = { workspace = true }
+kyoso_graph_crdt    = { workspace = true }
+kyoso_comments_crdt = { workspace = true }
+kyoso_server        = { workspace = true }
+
+axum              = { workspace = true }
+tokio             = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures           = { workspace = true }
+postcard          = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+tracing           = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+clap         = { workspace = true }
+hdrhistogram = { workspace = true }
+rand         = { workspace = true }
+chrono       = { workspace = true }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "kyoso_loadgen"
+path = "src/bin/kyoso_loadgen.rs"
+
+[[bin]]
+name = "kyoso_chaos"
+path = "src/bin/kyoso_chaos.rs"
+
+[[bin]]
+name = "kyoso_harness"
+path = "src/bin/kyoso_harness.rs"
+
+[[bin]]
+name = "kyoso_wire_probe"
+path = "src/bin/kyoso_wire_probe.rs"
+
+[[bin]]
+name = "kyoso_peer_sweep"
+path = "src/bin/kyoso_peer_sweep.rs"
