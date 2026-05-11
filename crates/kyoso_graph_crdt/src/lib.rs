@@ -19,3 +19,13 @@ pub use document::Document;
 pub use edge_category::{DanglePolicy, EdgeCategory, RefEdgeCrdt, RefEdgePolicy};
 pub use op::OpKind;
 pub use snapshot::{EdgeSnap, NodeSnap, Snapshot};
+
+/// String-slug identifying the graph model on the multi-model wire
+/// envelope. Stable; clients and servers must agree on the slug.
+pub const GRAPH_MODEL_ID: &str = "graph";
+
+/// Convenience constructor for the graph model id.
+#[must_use]
+pub fn graph_model() -> kyoso_crdt::ModelId {
+    kyoso_crdt::ModelId::new(GRAPH_MODEL_ID)
+}

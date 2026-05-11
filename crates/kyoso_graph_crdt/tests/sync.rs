@@ -327,13 +327,23 @@ fn move_op_round_trips_tree_parent_and_position() {
 #[test]
 fn move_op_rejects_cycles() {
     let mut a = make_replica(1);
+    let mut log = Log::new();
 
     let n1 = a.add_node();
     let n2 = a.add_node();
     let n3 = a.add_node();
-    // Build chain: n2 -> n1, n3 -> n2.
+    flush(&mut a, &mut log, &mut []);
+
+    // Build chain: n2 -> n1, n3 -> n2. `move_node` no longer locally
+    // pre-applies (was the cause of the concurrent-move divergence
+    // documented in `tests/move_race.rs`), so the chain only takes
+    // effect after each move's echo lands. We flush between moves
+    // so the local cycle check on the next call sees the prior move
+    // applied.
     assert!(a.move_node(n2, Some(n1), "a".into()));
+    flush(&mut a, &mut log, &mut []);
     assert!(a.move_node(n3, Some(n2), "a".into()));
+    flush(&mut a, &mut log, &mut []);
 
     // Local check: making n1 a child of n3 would form a cycle.
     assert!(!a.move_node(n1, Some(n3), "a".into()));
@@ -342,8 +352,6 @@ fn move_op_rejects_cycles() {
 
     // Apply a remote op that would form a cycle: it's silently dropped
     // (no state change) but advances applied_seq deterministically.
-    let mut log = Log::new();
-    flush(&mut a, &mut log, &mut []);
     let bad = Op::new(
         CrdtId::new(1, 999),
         OpKind::Move {

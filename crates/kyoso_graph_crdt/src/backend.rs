@@ -27,7 +27,7 @@ use std::marker::PhantomData;
 
 use kyoso_crdt::ApplyError;
 use kyoso_crdt::delta::{Path, PathSegment, WireDelta};
-use kyoso_crdt::id::{CrdtId, GlobalSeq, IdGenerator, PeerId};
+use kyoso_crdt::id::{CrdtId, GlobalSeq, IdGen, PeerId};
 use kyoso_crdt::op::Op;
 
 use crate::edge_category::EdgeCategory;
@@ -65,12 +65,26 @@ where
     N: Debug + Send + Sync + 'static,
     E: Debug + Send + Sync + 'static,
 {
-    id_gen: IdGenerator,
+    /// Shared id source. Cloning this handle is how other CRDT models
+    /// (comments, presence, …) on the same peer share a single
+    /// `LocalSeq` counter — that's what makes cross-model `CrdtId`
+    /// references safe.
+    ids: IdGen,
     nodes: HashMap<CrdtId, NodeRecord>,
     edges: HashMap<CrdtId, EdgeRecord>,
     /// Locally-generated ops that have not yet been confirmed by the
     /// server. The transport layer drains these and ships them upstream.
     pending: Vec<Op<OpKind>>,
+    /// Map `op_id → target node id` for in-flight `Move` ops we
+    /// generated locally. Lets [`is_pending_move_target`] answer
+    /// "is this entity awaiting a Move echo?" so detection systems
+    /// don't re-emit a Move on every Update tick before the echo
+    /// arrives. We do **not** locally pre-apply move (would diverge
+    /// from canonical's cycle decision under concurrent moves — see
+    /// `crates/kyoso_graph_crdt/tests/move_race.rs`), so the Bevy
+    /// echo-prevention check has to lean on this tracker instead of
+    /// reading a "just-pre-applied" tree_parent.
+    pending_moves: HashMap<CrdtId, CrdtId>,
     /// Highest server-confirmed [`GlobalSeq`] applied to this replica.
     applied_seq: GlobalSeq,
     _phantom: PhantomData<(N, E)>,
@@ -93,38 +107,59 @@ where
     N: Debug + Send + Sync + 'static,
     E: Debug + Send + Sync + 'static,
 {
+    /// Construct with a fresh, owned [`IdGen`] handle. Convenient for
+    /// single-model use (server-side mirrors, tests). For multi-model
+    /// peers — where the graph and comments backends must share one
+    /// counter — use [`Self::with_shared_ids`].
     pub fn with_peer(peer: PeerId) -> Self {
+        Self::with_shared_ids(IdGen::new(peer))
+    }
+
+    /// Construct sharing `ids` with other CRDT models on the same peer.
+    /// Cloning `ids` and passing it to each backend is how cross-model
+    /// references stay collision-free.
+    pub fn with_shared_ids(ids: IdGen) -> Self {
         Self {
-            id_gen: IdGenerator::new(peer),
+            ids,
             nodes: HashMap::new(),
             edges: HashMap::new(),
             pending: Vec::new(),
+            pending_moves: HashMap::new(),
             applied_seq: 0,
             _phantom: PhantomData,
         }
     }
 
     pub fn peer(&self) -> PeerId {
-        self.id_gen.peer()
+        self.ids.peer()
     }
 
-    /// Re-key the id generator under a new peer id. Only meaningful before
-    /// any mutations have been issued — existing pending ops keep their
-    /// original peer.
+    /// Re-key the id generator under a new peer id. Only meaningful
+    /// before any mutations have been issued — existing pending ops
+    /// keep their original peer. **Visible to every clone of the
+    /// shared [`IdGen`]**: when this backend shares its handle with
+    /// other models on the same peer, all of them see the new peer.
     pub fn set_peer(&mut self, peer: PeerId) {
-        self.id_gen = IdGenerator::new(peer);
+        self.ids.set_peer(peer);
     }
 
     pub fn applied_seq(&self) -> GlobalSeq {
         self.applied_seq
     }
 
-    /// Mint a fresh op-id from this backend's [`IdGenerator`]. Used by
+    /// Cloneable handle to this backend's id source. Hand a clone to
+    /// other CRDT models on the same peer so their minted IDs share the
+    /// per-peer `LocalSeq` namespace.
+    pub fn ids(&self) -> &IdGen {
+        &self.ids
+    }
+
+    /// Mint a fresh op-id from this backend's id source. Used by
     /// external producers (typed-schema plugins, custom op flows) that
     /// want to ride the same id-generation namespace as the backend
     /// itself.
     pub fn next_id(&mut self) -> CrdtId {
-        self.id_gen.next()
+        self.ids.next()
     }
 
     /// Push a fully-formed [`Op`] onto the pending queue. The
@@ -186,7 +221,7 @@ where
         if let Some(rec) = self.nodes.get_mut(&target) {
             rec.properties.insert(key.clone(), value.clone());
         }
-        let op_id = self.id_gen.next();
+        let op_id = self.ids.next();
         self.pending.push(Op::new(
             op_id,
             OpKind::SetNodeProperty {
@@ -202,7 +237,7 @@ where
         if let Some(rec) = self.edges.get_mut(&target) {
             rec.properties.insert(key.clone(), value.clone());
         }
-        let op_id = self.id_gen.next();
+        let op_id = self.ids.next();
         self.pending.push(Op::new(
             op_id,
             OpKind::SetRefEdgeProperty {
@@ -224,7 +259,7 @@ where
         to: CrdtId,
         category: EdgeCategory,
     ) -> CrdtId {
-        let id = self.id_gen.next();
+        let id = self.ids.next();
         self.edges.insert(
             id,
             EdgeRecord {
@@ -260,8 +295,15 @@ where
     /// `applied_seq`). The server uses this to checkpoint rooms; clients
     /// receive snapshots in [`ServerMsg::Welcome`](kyoso_crdt::ServerMsg) and
     /// [`restore`](Self::restore) from them.
+    ///
+    /// Nodes and edges are sorted by [`CrdtId`] so two replicas at the
+    /// same converged state produce structurally identical snapshots
+    /// (`Snapshot` derives `PartialEq` over `Vec<NodeSnap>`). Useful
+    /// for snapshot diffing, the chaos-sim convergence check, and the
+    /// server-side test that two server instances generate equal
+    /// snapshots from the same op history.
     pub fn snapshot(&self) -> Snapshot {
-        let nodes = self
+        let mut nodes: Vec<NodeSnap> = self
             .nodes
             .iter()
             .filter(|(_, rec)| !rec.tombstoned)
@@ -272,7 +314,8 @@ where
                 properties: rec.properties.clone(),
             })
             .collect();
-        let edges = self
+        nodes.sort_by_key(|n| n.id);
+        let mut edges: Vec<EdgeSnap> = self
             .edges
             .iter()
             .filter(|(_, rec)| !rec.tombstoned)
@@ -284,6 +327,7 @@ where
                 properties: rec.properties.clone(),
             })
             .collect();
+        edges.sort_by_key(|e| e.id);
         Snapshot {
             at_seq: self.applied_seq,
             nodes,
@@ -299,7 +343,7 @@ where
         self.edges.clear();
         self.applied_seq = snap.at_seq;
 
-        let my_peer = self.id_gen.peer();
+        let my_peer = self.ids.peer();
         let mut max_my_seq: Option<kyoso_crdt::id::LocalSeq> = None;
         let bump = |id: CrdtId, max: &mut Option<kyoso_crdt::id::LocalSeq>| {
             if id.peer == my_peer {
@@ -313,7 +357,9 @@ where
             bump(e.id, &mut max_my_seq);
         }
         if let Some(seq) = max_my_seq {
-            self.id_gen = IdGenerator::resume(my_peer, seq + 1);
+            // Bump (don't replace) — other models sharing this handle
+            // may already have minted higher seqs we mustn't roll back.
+            self.ids.bump_to(seq + 1);
         }
 
         for n in snap.nodes {
@@ -341,15 +387,27 @@ where
         }
     }
 
-    /// Atomic Kleppmann move. Sets `target`'s tree-parent + order-key
-    /// in one op and emits an [`OpKind::Move`]. Local apply runs the
-    /// same cycle check as [`apply_remote`](Self::apply_remote); if the
-    /// move would create a cycle it is dropped (no-op) and no op is
-    /// appended to `pending`.
+    /// Atomic Kleppmann move. Queues an [`OpKind::Move`] op for upstream
+    /// delivery and tracks the target in `pending_moves` so detection
+    /// systems can suppress re-emitting the same move before its echo
+    /// arrives (see [`Self::is_pending_move_target`]).
     ///
-    /// Returns `true` if the move was accepted locally. `false` means
-    /// the proposed parentage cycles; the caller may choose to surface
-    /// an error to the user.
+    /// Returns `false` if a cycle would be created against the *current*
+    /// (canonical) tree state, in which case the op is **not** queued.
+    /// `true` means "queued — final cycle decision deferred to
+    /// [`apply_remote`]". A move that passed the local check can still
+    /// be cycle-rejected at apply time if a concurrent move from
+    /// another peer (with a lower stamped seq) made the chain cyclic
+    /// in the meantime; in that case `apply_remote` silently no-ops the
+    /// move on every replica.
+    ///
+    /// **Does not pre-apply locally.** Setting `tree_parent` / `order_key`
+    /// happens only via `apply_remote`. This is what keeps
+    /// `apply_remote`'s cycle check deterministic across peers — if we
+    /// pre-applied, peer Y's local state could include Y's own pending
+    /// move and decide the chain cycles where canonical wouldn't (the
+    /// classic Kleppmann concurrent-move divergence; see
+    /// `tests/move_race.rs` for the worked example).
     pub fn move_node(
         &mut self,
         target: CrdtId,
@@ -361,11 +419,8 @@ where
                 return false;
             }
         }
-        if let Some(rec) = self.nodes.get_mut(&target) {
-            rec.tree_parent = new_parent;
-            rec.order_key = Some(position.clone());
-        }
-        let op_id = self.id_gen.next();
+        let op_id = self.ids.next();
+        self.pending_moves.insert(op_id, target);
         self.pending.push(Op::new(
             op_id,
             OpKind::Move {
@@ -375,6 +430,17 @@ where
             },
         ));
         true
+    }
+
+    /// True iff there's at least one locally-issued `Move` op queued or
+    /// in flight for `target`. Used by `kyoso_graph_sync`'s
+    /// `detect_tree_position_changes` to skip re-emitting a Move while
+    /// one is already in flight (since `tree_parent` reads return the
+    /// canonical value until echo arrives — without this check the
+    /// detection system would emit a fresh Move every Update tick).
+    #[must_use]
+    pub fn is_pending_move_target(&self, target: CrdtId) -> bool {
+        self.pending_moves.values().any(|t| *t == target)
     }
 
     /// Read a node's current tree parent (`None` for root or unknown).
@@ -426,13 +492,31 @@ where
                 from,
                 to,
             } => {
-                self.edges.entry(op.id).or_insert(EdgeRecord {
-                    from: *from,
-                    to: *to,
-                    category: category.clone(),
-                    tombstoned: false,
-                    properties: HashMap::new(),
-                });
+                // Un-tombstone on echo: AddRefEdge with seq N can find an
+                // entry that was cascade-tombstoned by an earlier
+                // RemoveNode (with seq < N) — the tombstone happened
+                // because the originating peer's local pre-apply had
+                // already inserted the edge before the RemoveNode
+                // reached it. Since AddRefEdge has the higher stamped
+                // seq, it supersedes the cascade. Safe because edge
+                // ids are unique-per-CrdtId: any RemoveRefEdge for this
+                // same id is necessarily later in seq order, so it'll
+                // re-tombstone in apply order.
+                self.edges
+                    .entry(op.id)
+                    .and_modify(|rec| {
+                        rec.tombstoned = false;
+                        rec.from = *from;
+                        rec.to = *to;
+                        rec.category = category.clone();
+                    })
+                    .or_insert_with(|| EdgeRecord {
+                        from: *from,
+                        to: *to,
+                        category: category.clone(),
+                        tombstoned: false,
+                        properties: HashMap::new(),
+                    });
             }
             OpKind::SetNodeProperty { target, path, delta } => {
                 if let Some(rec) = self.nodes.get_mut(target) {
@@ -473,8 +557,18 @@ where
                 // hit `target` we'd create a cycle — drop the op
                 // entirely (still advance applied_seq, since this is
                 // the deterministic decision every replica reaches).
+                //
+                // The check operates on `self.nodes`, which never
+                // contains locally-pre-applied tree moves (move_node
+                // doesn't pre-apply — see the doc comment on
+                // [`Self::move_node`]). That's what guarantees every
+                // replica's cycle decision is identical for the same
+                // op.
                 if let Some(parent_id) = new_parent {
                     if self.would_create_cycle(*target, *parent_id) {
+                        // Even rejected moves are "resolved" — clear
+                        // the pending tracker if this was our echo.
+                        self.pending_moves.remove(&op.id);
                         self.applied_seq = seq;
                         return Ok(());
                     }
@@ -483,6 +577,7 @@ where
                     rec.tree_parent = *new_parent;
                     rec.order_key = Some(position.clone());
                 }
+                self.pending_moves.remove(&op.id);
             }
         }
 
@@ -492,7 +587,7 @@ where
 
     /// Mint a new node, queue an [`OpKind::AddNode`] op, and return its id.
     pub fn add_node(&mut self) -> CrdtId {
-        let id = self.id_gen.next();
+        let id = self.ids.next();
         self.nodes.insert(
             id,
             NodeRecord {
@@ -522,7 +617,7 @@ where
                 edge.tombstoned = true;
             }
         }
-        let op_id = self.id_gen.next();
+        let op_id = self.ids.next();
         self.pending
             .push(Op::new(op_id, OpKind::RemoveNode { target: n }));
         true
@@ -545,7 +640,7 @@ where
             return false;
         }
         rec.tombstoned = true;
-        let op_id = self.id_gen.next();
+        let op_id = self.ids.next();
         self.pending
             .push(Op::new(op_id, OpKind::RemoveRefEdge { target: e }));
         true
@@ -553,7 +648,10 @@ where
 
     /// True iff making `proposed_parent` the new parent of `target`
     /// would form a cycle. Walks the chain `proposed_parent -> ...`
-    /// looking for `target`.
+    /// looking for `target`. Walks through tombstoned nodes too —
+    /// `remove_node` pre-applies tombstones locally, so filtering on
+    /// tombstone state would make this decision diverge per-replica
+    /// from canonical (chaos seed `0xCAFEF026`).
     fn would_create_cycle(&self, target: CrdtId, proposed_parent: CrdtId) -> bool {
         if target == proposed_parent {
             return true;
@@ -563,10 +661,7 @@ where
             if id == target {
                 return true;
             }
-            cursor = self
-                .nodes
-                .get(&id)
-                .and_then(|rec| if rec.tombstoned { None } else { rec.tree_parent });
+            cursor = self.nodes.get(&id).and_then(|rec| rec.tree_parent);
         }
         false
     }

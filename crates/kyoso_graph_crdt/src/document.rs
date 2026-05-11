@@ -34,7 +34,7 @@ use std::collections::HashMap;
 
 use kyoso_crdt::ApplyError;
 use kyoso_crdt::context::{CausalContext, CausalState};
-use kyoso_crdt::id::{CrdtId, GlobalSeq, IdGenerator, PeerId};
+use kyoso_crdt::id::{CrdtId, GlobalSeq, IdGen, PeerId};
 use kyoso_crdt::lattice::Crdt;
 use kyoso_crdt::op::Op;
 use kyoso_crdt::schema::{IntoWireOp, SchemaApply};
@@ -57,7 +57,10 @@ where
     S: Crdt + SchemaApply + Default,
     S::Delta: IntoWireOp,
 {
-    id_gen: IdGenerator,
+    /// Shared id source — clone the same handle across every CRDT
+    /// model on the peer (graph backend, comments backend, …) so
+    /// `LocalSeq` stays globally unique.
+    ids: IdGen,
     nodes: HashMap<CrdtId, NodeRecord<S>>,
     pending: Vec<Op<OpKind>>,
     applied_seq: GlobalSeq,
@@ -103,8 +106,14 @@ where
 {
     #[must_use]
     pub fn with_peer(peer: PeerId) -> Self {
+        Self::with_shared_ids(IdGen::new(peer))
+    }
+
+    /// Construct sharing `ids` with other CRDT models on the same peer.
+    #[must_use]
+    pub fn with_shared_ids(ids: IdGen) -> Self {
         Self {
-            id_gen: IdGenerator::new(peer),
+            ids,
             nodes: HashMap::new(),
             pending: Vec::new(),
             applied_seq: 0,
@@ -113,7 +122,12 @@ where
     }
 
     pub fn set_peer(&mut self, peer: PeerId) {
-        self.id_gen = IdGenerator::new(peer);
+        self.ids.set_peer(peer);
+    }
+
+    /// Cloneable handle to this document's id source.
+    pub fn ids(&self) -> &IdGen {
+        &self.ids
     }
 
     #[must_use]
@@ -132,7 +146,7 @@ where
     /// count, LWW stamps would interleave wrong with concurrent ops),
     /// so property visibility still waits for the server roundtrip.
     pub fn add_node(&mut self) -> CrdtId {
-        let id = self.id_gen.next();
+        let id = self.ids.next();
         self.nodes.insert(
             id,
             NodeRecord {
@@ -162,7 +176,7 @@ where
     /// schema replica of the current state, derive the
     /// `(path, WireDelta)`, and discard the throwaway.
     pub fn mutate_node(&mut self, id: CrdtId, mutation: S::Mutation) {
-        let op_id = self.id_gen.next();
+        let op_id = self.ids.next();
         self.mutate_node_with_id(id, op_id, mutation);
     }
 
@@ -207,7 +221,7 @@ where
     /// Queue a tombstone for upstream delivery. Visibility (the node
     /// disappearing from [`Self::node`]) waits for server confirmation.
     pub fn remove_node(&mut self, id: CrdtId) {
-        let op_id = self.id_gen.next();
+        let op_id = self.ids.next();
         self.pending
             .push(Op::new(op_id, OpKind::RemoveNode { target: id }));
     }
