@@ -1,56 +1,41 @@
-//! Bevy ↔ kyoso_server bridge.
+//! Multi-model transport for the [`kyoso_crdt`] envelope protocol.
 //!
-//! Add [`CrdtSyncPlugin`] to a Bevy `App`, configured with the server URL
-//! and a room id, and the app gains a `Graph<N, E, CrdtBackend<N, E>>`
-//! resource that stays in sync with every other peer joined to the same
-//! room.
+//! This crate is **model-agnostic**. It owns the WebSocket connection
+//! ([`WsClient`], [`SyncTransportPlugin`]), exposes the per-peer
+//! [`PeerIdGen`] handle so all CRDT models on a peer share one
+//! `LocalSeq` namespace, and drains inbound envelopes into [`WsInbound`]
+//! Bevy events for per-model plugins to consume.
 //!
-//! # Example
+//! Per-model Bevy plugins live in their own crates:
+//!
+//! - [`kyoso_graph_sync`](https://docs.rs/kyoso_graph_sync) — graph
+//!   model (`GraphSyncPlugin`, detection systems, projection, typed
+//!   schema sync, edge category dispatch).
+//! - [`kyoso_comments_sync`](https://docs.rs/kyoso_comments_sync) —
+//!   comments / threads / annotations.
+//!
+//! ## Wiring an app
 //!
 //! ```ignore
 //! use bevy::prelude::*;
-//! use kyoso_sync::CrdtSyncPlugin;
-//!
-//! #[derive(Component, Default, Debug, Clone)]
-//! struct SceneNode;
-//! #[derive(Component, Default, Debug, Clone, Copy)]
-//! struct SceneEdge;
+//! use kyoso_sync::SyncTransportPlugin;
+//! use kyoso_graph_sync::GraphSyncPlugin;
+//! use kyoso_comments_sync::CommentsSyncPlugin;
 //!
 //! App::new()
-//!     .add_plugins(CrdtSyncPlugin::<SceneNode, SceneEdge>::new(
-//!         "ws://localhost:7878/ws",
-//!         "demo-room",
-//!     ))
+//!     .add_plugins(SyncTransportPlugin::new("ws://localhost:7878/ws", "demo"))
+//!     .add_plugins(GraphSyncPlugin::<MyNode, MyEdge>::default())
+//!     .add_plugins(CommentsSyncPlugin::default())
 //!     .run();
 //! ```
 
-pub mod builtin_schemas;
-pub mod category;
 pub mod client;
-pub mod engine;
-pub mod index;
-pub mod plugin;
-pub mod schema_sync;
 pub mod sequence_diff;
+pub mod transport;
 
-pub use builtin_schemas::TransformSchema;
-pub use category::{
-    EdgeCategoryMarker, EdgeCategoryProjectors, SyncedEdgeCategoryPlugin,
-};
 pub use client::{ConnectError, Inbound, WsClient};
-pub use engine::ClientSyncEngine;
-pub use index::EntityCrdtIndex;
-pub use plugin::{
-    ClearLocalPresence, CrdtSyncPlugin, RawPresence, RawPresenceEvent, RemoteOpApplied,
-    SetLocalPresence, SyncStatus, Syncable,
-};
-pub use schema_sync::{
-    SchemaDoc, SchemaField, SchemaSync, SchemaSyncedEdgeComponentPlugin,
-    SchemaSyncedNodeComponentPlugin,
-};
 pub use sequence_diff::sequence_diff;
-
-// Re-export the derive macro alongside the trait. Rust's namespace rules
-// allow a trait and a derive macro to share a name; consumers can write
-// `use kyoso_sync::SchemaSync;` to bring both into scope.
-pub use kyoso_sync_derive::SchemaSync;
+pub use transport::{
+    ClearLocalPresence, ModelRegistry, PeerIdGen, RawPresence, RawPresenceEvent,
+    SetLocalPresence, SyncStatus, SyncTransportPlugin, WsBridge, WsInbound,
+};

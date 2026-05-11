@@ -375,14 +375,14 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 // side type is the inner type's own schema struct.
                 schema_struct_fields.push(quote! {
                     #vis #field_schema_ident:
-                        <#ty as ::kyoso_sync::SchemaSync>::Schema,
+                        <#ty as ::kyoso_graph_sync::SchemaSync>::Schema,
                 });
                 // Delegate to the inner type's own changes_against and
                 // wrap each emitted mutation in this field's variant.
                 changes_arms.push(quote! {
                     {
                         for inner_mut in
-                            ::kyoso_sync::SchemaSync::changes_against(
+                            ::kyoso_graph_sync::SchemaSync::changes_against(
                                 &self.#component_ident,
                                 &current.#field_schema_ident,
                             )
@@ -395,7 +395,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 });
                 write_back_arms.push(quote! {
                     {
-                        ::kyoso_sync::SchemaSync::write_back(
+                        ::kyoso_graph_sync::SchemaSync::write_back(
                             &mut self.#component_ident,
                             &schema.#field_schema_ident,
                         );
@@ -473,7 +473,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 changes_arms.push(quote! {
                     {
                         for inner_mut in
-                            <#with_ty as ::kyoso_sync::SchemaField>::changes_against(
+                            <#with_ty as ::kyoso_graph_sync::SchemaField>::changes_against(
                                 &current.#field_schema_ident,
                                 &self.#component_ident,
                             )
@@ -486,7 +486,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 });
                 write_back_arms.push(quote! {
                     {
-                        <#with_ty as ::kyoso_sync::SchemaField>::project_to(
+                        <#with_ty as ::kyoso_graph_sync::SchemaField>::project_to(
                             &schema.#field_schema_ident,
                             &mut self.#component_ident,
                         );
@@ -508,7 +508,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             #( #schema_struct_fields )*
         }
 
-        impl ::kyoso_sync::SchemaSync for #component_ident {
+        impl ::kyoso_graph_sync::SchemaSync for #component_ident {
             type Schema = #schema_ident;
             const SCHEMA_NAME: &'static str = #schema_name;
 

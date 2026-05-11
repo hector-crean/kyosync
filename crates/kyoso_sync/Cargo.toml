@@ -5,12 +5,10 @@ authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Bevy plugin bridging kyoso_graph to a kyoso_server WebSocket session"
+description = "Multi-model transport for kyoso_crdt: WsClient, SyncTransportPlugin, ModelRegistry, PeerIdGen, presence. Per-model Bevy plugins live in their own crates (kyoso_graph_sync, kyoso_comments_sync)."
 
 [dependencies]
-kyoso_graph       = { workspace = true }
 kyoso_crdt        = { workspace = true }
-kyoso_graph_crdt  = { workspace = true }
 kyoso_sync_derive = { workspace = true }
 
 bevy              = { workspace = true }
@@ -23,26 +21,5 @@ crossbeam-channel = { workspace = true }
 tracing           = { workspace = true }
 thiserror         = { workspace = true }
 
-[dev-dependencies]
-kyoso_server       = { workspace = true }
-axum               = { workspace = true }
-tracing-subscriber = { workspace = true }
-
-# For the windowed `scene_2d` example: pulls Bevy's default plugin set
-# (windowing, rendering, sprites, picking) on top of the workspace's
-# default-disabled bevy.
-bevy           = { workspace = true, features = ["default"] }
-kyoso_polyline = { workspace = true }
-kyoso_drag     = { workspace = true }
-kyoso_camera   = { workspace = true }
-
 [lints]
 workspace = true
-
-[[example]]
-name = "peer"
-path = "examples/peer.rs"
-
-[[example]]
-name = "scene_2d"
-path = "examples/scene_2d.rs"
