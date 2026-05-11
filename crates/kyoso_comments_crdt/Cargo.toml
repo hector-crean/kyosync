@@ -1,0 +1,25 @@
+[package]
+name = "kyoso_comments_crdt"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Comments / threads / annotations CRDT data model. Anchored to graph CrdtIds via cross-model references; implements CrdtModel from kyoso_crdt."
+
+[dependencies]
+kyoso_crdt = { workspace = true }
+serde      = { workspace = true }
+postcard   = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+kyoso_graph_crdt = { workspace = true }
+criterion        = { workspace = true }
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "backend"
+harness = false

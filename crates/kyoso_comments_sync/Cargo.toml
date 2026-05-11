@@ -1,0 +1,28 @@
+[package]
+name = "kyoso_comments_sync"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy ECS plugin for the comments CRDT model. Sits on top of kyoso_sync's multi-model transport alongside kyoso_graph_sync."
+
+[dependencies]
+kyoso_crdt          = { workspace = true }
+kyoso_comments_crdt = { workspace = true }
+kyoso_sync          = { workspace = true }
+
+bevy     = { workspace = true }
+postcard = { workspace = true }
+tracing  = { workspace = true }
+
+[dev-dependencies]
+kyoso_server     = { workspace = true }
+kyoso_graph      = { workspace = true }
+kyoso_graph_crdt = { workspace = true }
+kyoso_graph_sync = { workspace = true }
+axum             = { workspace = true }
+tokio            = { workspace = true }
+
+[lints]
+workspace = true
