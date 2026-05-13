@@ -14,10 +14,10 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
-use kyoso_crdt::{InMemoryOpLog, OpLogRead, OpLogWrite};
-use kyoso_graph_crdt::{CrdtBackend, OpKind};
+use kyoso_crdt::{EmptySchema, InMemoryOpLog, OpLogRead, OpLogWrite};
+use kyoso_graph_crdt::{GraphBackend, OpKind};
 
-type Backend = CrdtBackend<(), ()>;
+type Backend = GraphBackend<EmptySchema>;
 type Log = InMemoryOpLog<OpKind>;
 
 fn populate(n: usize) -> (Backend, Log) {

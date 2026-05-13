@@ -5,20 +5,19 @@
 //! out so `kyoso_crdt` can host other domain models (comments, presence,
 //! text) alongside the graph on the same wire protocol and shared id space.
 //!
-//! See [`CrdtBackend`] for the storage type, [`OpKind`] for the op enum,
-//! and [`Document`] for the schema-aware typed wrapper.
+//! See [`GraphBackend`] for the storage type and [`OpKind`] for the op enum.
 
-pub mod backend;
-pub mod document;
 pub mod edge_category;
+pub mod graph_backend;
 pub mod op;
 pub mod snapshot;
+pub mod topology;
 
-pub use backend::CrdtBackend;
-pub use document::Document;
 pub use edge_category::{DanglePolicy, EdgeCategory, RefEdgeCrdt, RefEdgePolicy};
+pub use graph_backend::GraphBackend;
 pub use op::OpKind;
 pub use snapshot::{EdgeSnap, NodeSnap, Snapshot};
+pub use topology::GraphTopology;
 
 /// String-slug identifying the graph model on the multi-model wire
 /// envelope. Stable; clients and servers must agree on the slug.

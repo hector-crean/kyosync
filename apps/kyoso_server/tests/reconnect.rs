@@ -30,8 +30,8 @@ use kyoso_comments_crdt::{CommentOpKind, comments_model};
 use kyoso_crdt::{
     CrdtId, EnvelopeClientMsg, EnvelopeServerMsg, GlobalSeq, ModelGreeting, ModelId, PeerId, Tier,
 };
-use kyoso_graph_crdt::{OpKind, Snapshot, graph_model};
-use kyoso_server::{AppState, OpStore};
+use kyoso_graph_crdt::{OpKind, graph_model};
+use kyoso_server::{AppState, OpStore, model::Snapshot};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 

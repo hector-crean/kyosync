@@ -24,12 +24,12 @@
 //! [`ClientMsg`]: kyoso_crdt::ClientMsg
 //! [`ServerMsg`]: kyoso_crdt::ServerMsg
 
-use kyoso_crdt::CrdtModel;
-use kyoso_graph_crdt::CrdtBackend;
+use kyoso_crdt::{CrdtModel, EmptySchema};
+use kyoso_graph_crdt::GraphBackend;
 
 /// The CRDT model the server uses for all rooms. Change this one line
 /// to retarget the server at a different model.
-pub type ServerModel = CrdtBackend<(), ()>;
+pub type ServerModel = GraphBackend<EmptySchema>;
 
 /// Op type stored in the log + sent on the wire, resolved to the
 /// concrete kind that [`ServerModel`] uses.

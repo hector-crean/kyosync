@@ -1,10 +1,10 @@
 //! End-to-end composition convergence tests.
 //!
-//! Two replicas drive [`Document<NodeProperties>`] over a shared
+//! Two replicas drive [`GraphBackend<NodeProperties>`] over a shared
 //! [`InMemoryOpLog`]. Mutations on either side flow through the log and
 //! converge on the other. Exercises:
 //!
-//! - typed mutate → wire round-trip via `derive(Crdt)` + `Document<S>`
+//! - typed mutate → wire round-trip via `derive(Crdt)` + typed schemas
 //! - convergence under interleaved concurrent ops across mixed CRDT
 //!   types (LWW + OrSet + PnCounter)
 //! - idempotency under duplicate delivery
@@ -12,7 +12,7 @@
 
 use kyoso_crdt::types::{LwwMut, LwwRegister, OrSet, OrSetMut, PnCounter, PnMut};
 use kyoso_crdt::{CrdtId, DeriveCrdt, InMemoryOpLog, OpLogRead, OpLogWrite, PeerId};
-use kyoso_graph_crdt::{Document, OpKind};
+use kyoso_graph_crdt::{GraphBackend, OpKind};
 
 #[derive(Clone, Debug, Default, PartialEq, DeriveCrdt)]
 pub struct NodeProperties {
@@ -21,7 +21,7 @@ pub struct NodeProperties {
     pub counter: PnCounter,
 }
 
-type Doc = Document<NodeProperties>;
+type Doc = GraphBackend<NodeProperties>;
 type Log = InMemoryOpLog<OpKind>;
 
 fn make_doc(peer: PeerId) -> Doc {

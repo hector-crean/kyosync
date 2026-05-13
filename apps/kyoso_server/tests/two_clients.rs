@@ -15,7 +15,8 @@ use futures::{SinkExt, StreamExt};
 use kyoso_crdt::{
     CrdtId, EnvelopeClientMsg, EnvelopeServerMsg, GlobalSeq, ModelGreeting, PeerId, Tier,
 };
-use kyoso_graph_crdt::{OpKind, Snapshot, graph_model};
+use kyoso_graph_crdt::{OpKind, graph_model};
+use kyoso_server::model::Snapshot;
 use kyoso_server::{AppState, OpStore, RoomManager, app};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -290,7 +291,7 @@ async fn welcome_uses_snapshot_after_periodic_take() {
         .expect("store ok")
         .expect("graph snapshot persisted");
     assert_eq!(snap.at_seq, 3);
-    assert_eq!(snap.nodes.len(), 3);
+    assert_eq!(snap.topology.nodes.len(), 3);
 
     // A late joiner with `since: 0` should now receive the snapshot
     // (cheaper than replaying all 3 ops from scratch).

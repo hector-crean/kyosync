@@ -22,10 +22,10 @@
 //! per-replica check (here the cycle check) that may decide
 //! differently from canonical.
 
-use kyoso_crdt::{CrdtModel, InMemoryOpLog, OpLogRead, OpLogWrite};
-use kyoso_graph_crdt::{CrdtBackend, OpKind};
+use kyoso_crdt::{EmptySchema, InMemoryOpLog, OpLogRead, OpLogWrite};
+use kyoso_graph_crdt::{GraphBackend, OpKind};
 
-type Backend = CrdtBackend<(), ()>;
+type Backend = GraphBackend<EmptySchema>;
 type Log = InMemoryOpLog<OpKind>;
 
 /// Send peer's pending ops through the shared log + broadcast back to
@@ -87,12 +87,12 @@ fn concurrent_swap_moves_converge() {
         "Y applied_seq matches canonical"
     );
 
-    let n1_canon = canon_snap.nodes.iter().find(|n| n.id == n1).unwrap();
-    let p1_canon = canon_snap.nodes.iter().find(|n| n.id == p1).unwrap();
-    let n1_x = x_snap.nodes.iter().find(|n| n.id == n1).unwrap();
-    let p1_x = x_snap.nodes.iter().find(|n| n.id == p1).unwrap();
-    let n1_y = y_snap.nodes.iter().find(|n| n.id == n1).unwrap();
-    let p1_y = y_snap.nodes.iter().find(|n| n.id == p1).unwrap();
+    let n1_canon = canon_snap.topology.nodes.iter().find(|n| n.id == n1).unwrap();
+    let p1_canon = canon_snap.topology.nodes.iter().find(|n| n.id == p1).unwrap();
+    let n1_x = x_snap.topology.nodes.iter().find(|n| n.id == n1).unwrap();
+    let p1_x = x_snap.topology.nodes.iter().find(|n| n.id == p1).unwrap();
+    let n1_y = y_snap.topology.nodes.iter().find(|n| n.id == n1).unwrap();
+    let p1_y = y_snap.topology.nodes.iter().find(|n| n.id == p1).unwrap();
 
     // The ASSERTION the bug violates:
     assert_eq!(

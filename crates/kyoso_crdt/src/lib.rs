@@ -33,6 +33,7 @@
 //!  apply_remote(op1@N+1) ◄─┘
 //! ```
 
+pub mod backend;
 pub mod context;
 pub mod delta;
 pub mod envelope;
@@ -43,8 +44,10 @@ pub mod model;
 pub mod op;
 pub mod protocol;
 pub mod schema;
+pub mod topology;
 pub mod types;
 
+pub use backend::{Backend, EmptySchema, Snapshot};
 pub use context::{CausalContext, CausalState, Dot, SubDot};
 pub use delta::{Path, PathSegment, WireDelta};
 pub use envelope::{EnvelopeClientMsg, EnvelopeServerMsg, ModelGreeting, ModelId, Tier};
@@ -55,6 +58,7 @@ pub use model::{ApplyError, CrdtModel};
 pub use op::{Diff, Op};
 pub use protocol::{ClientMsg, RoomId, ServerMsg};
 pub use schema::{IntoWireOp, SchemaApply};
+pub use topology::{PropertyOp, Topology};
 
 // Re-export the derive macro so users only need `use kyoso_crdt::Crdt`.
 pub use kyoso_crdt_derive::Crdt as DeriveCrdt;
