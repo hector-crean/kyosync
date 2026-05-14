@@ -76,6 +76,42 @@ where
         self.inner.ids()
     }
 
+    /// Mint a fresh op ID from the underlying ID generator.
+    ///
+    /// Used by typed-schema sync plugins that pre-mint an op ID, build
+    /// the op themselves, and push it via [`Self::enqueue`].
+    pub fn mint_id(&mut self) -> CrdtId {
+        self.inner.mint_id()
+    }
+
+    /// Push a pre-built op onto the pending queue.
+    ///
+    /// Escape hatch for callers that construct the op themselves (e.g.
+    /// typed-schema sync plugins building `SetNodeProperty` ops with
+    /// pre-minted IDs). Most code should prefer the domain methods
+    /// ([`Self::add_node`], [`Self::move_node`], etc.) which queue ops
+    /// internally.
+    pub fn enqueue(&mut self, op: Op<OpKind>) {
+        self.inner.pending_mut().push(op);
+    }
+
+    /// Ensure a schema slot exists for the given entity ID.
+    pub fn ensure_node(&mut self, id: CrdtId) {
+        self.inner.ensure_schema(id);
+    }
+
+    /// Apply just the property portion of an op directly to the schema,
+    /// bypassing `GlobalSeq` validation.
+    ///
+    /// Used by per-schema secondary stores (typed-schema sync plugins)
+    /// that mirror property ops already applied to a primary backend.
+    pub fn apply_property_op(
+        &mut self,
+        op: &Op<OpKind>,
+    ) -> Result<(), kyoso_crdt::DeltaError> {
+        self.inner.apply_property_op(op)
+    }
+
     /// Mint a new node and queue an AddNode op. Returns the node's ID.
     ///
     /// Pre-inserts a default schema entry so subsequent `mutate_node()` calls

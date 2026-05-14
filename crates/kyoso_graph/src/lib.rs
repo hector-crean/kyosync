@@ -1,16 +1,14 @@
 pub mod commands;
 pub mod components;
-pub mod constraint;
-pub mod domain;
+pub mod ecs_view;
 pub mod queries;
-pub mod recipe;
 pub mod solver;
 pub mod transaction;
 pub mod tree;
-pub mod wfc;
 
 pub use commands::*;
 pub use components::*;
+pub use ecs_view::EcsGraphView;
 pub use queries::*;
 pub use solver::*;
 pub use transaction::*;
@@ -92,6 +90,21 @@ pub enum GraphMessage {
         from: Entity,
         to: Entity,
         changes: EdgeChangeSet,
+    },
+
+    /// A node moved within the tree — either reparented (changed
+    /// [`tree::TreeParent`]) or reordered among its siblings (changed
+    /// [`tree::OrderKey`]).
+    ///
+    /// Fired by [`detect_tree_position_changes`] for both local and
+    /// remote-applied moves, so downstream propagation handles them
+    /// uniformly without caring which side originated the move.
+    /// `new_parent` is `None` for a root.
+    TreePositionChanged {
+        entity: Entity,
+        new_parent: Option<Entity>,
+        position: tree::OrderKey,
+        changes: NodeChangeSet,
     },
 
     PropagationTriggered {
@@ -184,13 +197,13 @@ impl Default for GraphEventPropagationConfig {
 /// ```text
 /// TransactionRecording → CommandApplication → ChangeDetection
 ///   → EventGeneration → EventPropagation → Solving
-///   → GraphSync → SnapshotCreation → Consumption
+///   → SnapshotCreation → Consumption
 /// ```
 ///
 /// [`GraphManagerPlugin`] configures this chain and populates
-/// `CommandApplication`, `ChangeDetection`, `EventPropagation`, and
-/// `GraphSync`.  The remaining sets are available for downstream plugins
-/// and user systems.
+/// `CommandApplication`, `ChangeDetection`, and `EventPropagation`.
+/// The remaining sets are available for downstream plugins and user
+/// systems.
 #[derive(SystemSet, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum GraphSystemSet {
     /// External commands arrive (from MCP, network, UI, etc.).
@@ -205,8 +218,6 @@ pub enum GraphSystemSet {
     EventPropagation,
     /// Solver/constraint evaluation (see [`SolverSet`]).
     Solving,
-    /// ECS state mirrored to the petgraph representation.
-    GraphSync,
     /// State captured for undo/redo and network replication.
     SnapshotCreation,
     /// Downstream consumers: rendering, network broadcast, etc.
@@ -269,10 +280,6 @@ where
             .add_message::<GraphCommand>()
             .init_resource::<GraphEventPropagationConfig>()
             .init_resource::<PropagationBuffer>()
-            // Define the pipeline ordering. The `GraphSync` set is kept
-            // for backwards compatibility but no longer schedules any
-            // systems — the petgraph mirror that `sync_graph_*` used to
-            // maintain is gone (Part IV §IV.2 Step 3).
             .configure_sets(
                 Update,
                 (
@@ -282,7 +289,6 @@ where
                     GraphSystemSet::EventGeneration,
                     GraphSystemSet::EventPropagation,
                     GraphSystemSet::Solving,
-                    GraphSystemSet::GraphSync,
                     GraphSystemSet::SnapshotCreation,
                     GraphSystemSet::Consumption,
                 )
@@ -301,6 +307,7 @@ where
                     detect_node_changes::<Node, Edge>,
                     detect_edge_changes::<Edge>,
                     detect_topology_changes,
+                    detect_tree_position_changes,
                 )
                     .chain()
                     .in_set(GraphSystemSet::ChangeDetection),
@@ -447,6 +454,39 @@ fn detect_topology_changes(
     }
 }
 
+/// Emit [`GraphMessage::TreePositionChanged`] when a node's
+/// [`tree::TreeParent`] or [`tree::OrderKey`] changes — i.e. when the
+/// node has been reparented or reordered among its siblings.
+///
+/// Fires uniformly for:
+/// - Local edits via [`GraphCommand::Reparent`] /
+///   [`GraphCommand::MoveSibling`] / [`GraphCommand::InsertChild`].
+/// - Remote-applied CRDT `Move` ops, where
+///   `kyoso_graph_sync::plugin::project_move` writes a new
+///   `TreeParent` / `OrderKey` onto the affected entity.
+///
+/// The propagation layer ([`read_propagation_messages`]) treats this
+/// like [`GraphMessage::NodeChanged`], so a tree move triggers the
+/// same downstream propagation as any other node update — meaning
+/// solvers and consumers don't have to special-case where the move
+/// originated.
+fn detect_tree_position_changes(
+    mut graph_messages: MessageWriter<GraphMessage>,
+    moved: Query<
+        (Entity, &tree::TreeParent, &tree::OrderKey),
+        Or<(Changed<tree::TreeParent>, Changed<tree::OrderKey>)>,
+    >,
+) {
+    for (entity, parent, key) in moved.iter() {
+        graph_messages.write(GraphMessage::TreePositionChanged {
+            entity,
+            new_parent: parent.0,
+            position: key.clone(),
+            changes: NodeChangeSet::default(),
+        });
+    }
+}
+
 // ============================================================================
 // Event Propagation System
 // ============================================================================
@@ -478,6 +518,12 @@ fn read_propagation_messages<Node: GraphComponent, Edge: GraphComponent>(
             | GraphMessage::NodeAdded {
                 entity,
                 initial_neighbors: _,
+            }
+            | GraphMessage::TreePositionChanged {
+                entity,
+                new_parent: _,
+                position: _,
+                changes: _,
             } => {
                 if config.propagate_node_changes {
                     let affected_nodes = match config.default_node_propagation {
@@ -568,9 +614,3 @@ fn write_propagation_events(
     }
 }
 
-// The `sync_graph_*` systems that mirrored ECS state into a petgraph
-// `Graph<N, E, B>` resource were deleted in Part IV §IV.2 Step 3. The
-// petgraph mirror they maintained had only two consumers (`wfc_solve`
-// and `evaluate_recipes`), both of which now build their working
-// `StableGraph`s directly from `GraphQuery` instead. Without a mirror
-// to maintain, these systems had no work to do.

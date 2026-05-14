@@ -9,15 +9,21 @@
 
 pub mod edge_category;
 pub mod graph_backend;
+pub mod invariants;
 pub mod op;
-pub mod snapshot;
 pub mod topology;
+pub mod view;
 
 pub use edge_category::{DanglePolicy, EdgeCategory, RefEdgeCrdt, RefEdgePolicy};
 pub use graph_backend::GraphBackend;
+pub use invariants::{
+    check_topology, cross_check_cycle_detection, InvariantViolation, ViolationKind,
+};
 pub use op::OpKind;
-pub use snapshot::{EdgeSnap, NodeSnap, Snapshot};
-pub use topology::GraphTopology;
+pub use topology::{EdgeSnap, GraphSnapshot, GraphTopology, NodeSnap};
+pub use view::{
+    ancestors, connected_component_undirected, descendants, would_create_cycle, GraphView,
+};
 
 /// String-slug identifying the graph model on the multi-model wire
 /// envelope. Stable; clients and servers must agree on the slug.

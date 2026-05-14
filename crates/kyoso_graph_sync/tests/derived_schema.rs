@@ -1097,6 +1097,13 @@ mod custom_with {
         ) -> Result<(), DeltaError> {
             self.inner.apply_wire(path, delta, ctx)
         }
+        fn install_state(
+            &mut self,
+            path: &Path,
+            field: kyoso_crdt::OpaqueField,
+        ) -> Result<(), DeltaError> {
+            self.inner.install_state(path, field)
+        }
     }
 
     impl IntoWireOp for HalvedDelta {
@@ -1206,5 +1213,309 @@ mod custom_with {
             SchemaSyncedNodeComponentPlugin::<Container, DerivedEdge, Container>::default(),
         ));
         app
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Compaction-recovery: typed-schema state survives server GC.
+// ---------------------------------------------------------------------------
+
+mod compaction_recovery {
+    use super::{Counted, build_counted_app, pump_until, sync_status};
+    use bevy::prelude::App;
+    use kyoso_server::{AppState, app};
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::net::TcpListener;
+
+    async fn spawn_server_with(state: AppState) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let router = app(state);
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        addr
+    }
+
+    /// Late joiner sees typed-schema state via snapshot hydration even
+    /// after the server has compacted every `SetNodeProperty` op below
+    /// the snapshot point.
+    ///
+    /// Pre-fix, the server's snapshot was over `EmptySchema` so it
+    /// captured zero typed state, and the GC compacted the property
+    /// ops that would have allowed late replay. Result: late joiner B
+    /// had a node entity but no `Counted` properties.
+    ///
+    /// Post-fix, the server's snapshot is over `OpaqueSchemaState` so
+    /// the PN-counter state lives in the snapshot itself and is
+    /// hydrated into `SchemaDoc<CountedSchema>` on B's Welcome.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn late_joiner_hydrates_typed_schema_after_compaction() {
+        let state = AppState::in_memory();
+        let rooms = state.rooms.clone();
+        let addr = spawn_server_with(state).await;
+        let handle = tokio::runtime::Handle::current();
+
+        // App A: connect, spawn Counted{edits=7}, wait until A has
+        // received its own server-echoed op so the engine's
+        // `applied_seq` is past the mutation. Also block long enough
+        // for A to send its `Ack` (the outbound system does this once
+        // per frame on `applied_seq` change), so `min_ack` advances
+        // before we trigger GC.
+        let rooms_inner = Arc::clone(&rooms);
+        let outcome: bool = tokio::task::spawn_blocking(move || {
+            let mut a = build_counted_app(addr, "compaction-typed");
+            pump_until(
+                &mut [&mut a],
+                Duration::from_secs(2),
+                "A connected",
+                |apps| sync_status(apps[0]).is_connected(),
+            );
+            a.world_mut().spawn(Counted { edits: 7 });
+
+            // Wait for A to apply its own echoed op, then keep
+            // pumping a bit so the Ack reaches the server.
+            pump_until(
+                &mut [&mut a],
+                Duration::from_secs(3),
+                "A applied own echo",
+                |apps| {
+                    let mut q = apps[0].world_mut().query::<&Counted>();
+                    q.iter(apps[0].world()).any(|c| c.edits == 7)
+                },
+            );
+            for _ in 0..30 {
+                a.update();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+
+            // Trigger snapshot + GC on the server's room.
+            let dropped: u64 = handle.block_on(async {
+                let room = rooms_inner
+                    .get_or_create("compaction-typed")
+                    .await
+                    .expect("room");
+                room.take_snapshot_all().await;
+                room.run_gc_all().await
+            });
+            assert!(
+                dropped > 0,
+                "expected GC to compact property ops below snapshot, got {dropped}"
+            );
+
+            // App B: fresh late joiner. Its Welcome carries a
+            // snapshot at the compacted point, an empty diff (every
+            // op below the snapshot was compacted), and opaque
+            // typed-schema state for Counted that hydrates into B's
+            // SchemaDoc<CountedSchema>.
+            let mut b = build_counted_app(addr, "compaction-typed");
+            pump_until(
+                &mut [&mut a, &mut b],
+                Duration::from_secs(3),
+                "B hydrated Counted{edits=7} from snapshot",
+                |apps| {
+                    let mut q = apps[1].world_mut().query::<&Counted>();
+                    q.iter(apps[1].world()).any(|c| c.edits == 7)
+                },
+            );
+            true
+        })
+        .await
+        .expect("worker panic");
+        assert!(outcome);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reconnect-clobber regression — Welcome snapshot must not provoke
+// `SetNodeProperty(<default value>)` emissions on the joining peer.
+//
+// Scenario reproduced in production (circuit client, May 2026):
+//   1. Peers A, B, C build out a scene; their per-node typed schema
+//      state (Transform, OnLayer, Resistor params, …) lives in the
+//      server's `OpaqueSchemaState` snapshot once GC compacts the
+//      property ops below the snapshot point.
+//   2. A new peer D joins. Welcome arrives with a snapshot. The graph
+//      plugin's `project_snapshot` spawns the structural marker
+//      (`CircuitNode`) for each replicated node. Bevy auto-inserts
+//      the marker's `#[require(...)]` components — `Transform`, etc. —
+//      at `Default::default()` BEFORE `project_typed_to_bevy` has a
+//      chance to write the hydrated values back from `SchemaDoc`.
+//   3. `detect_typed_changes` runs after `ensure_schema_slots`, sees
+//      `Changed<C>` for every just-inserted component, diffs the local
+//      default against the hydrated doc state, and emits
+//      `SetNodeProperty(<default>)` ops — one per node, per
+//      auto-required component.
+//   4. Those ops broadcast to all peers. Every peer (including A/B/C)
+//      writes the defaults back into its own components. Result: the
+//      scene "snaps to origin" the moment D joins.
+//
+// This test reproduces the path minimally: a marker component with
+// `#[require(Counted)]` so Bevy auto-inserts `Counted::default()`
+// during `project_snapshot`'s spawn. With the fix, `detect_typed_changes`
+// suppresses the first-frame Added emission whenever the doc already
+// holds non-default state (i.e. it was just hydrated from a snapshot).
+mod reconnect_clobber {
+    use super::{build_counted_app, pump_until, sync_status, Counted};
+    use bevy::prelude::*;
+    use kyoso_graph::GraphManagerPlugin;
+    use kyoso_graph_sync::{GraphSyncPlugin, SchemaSyncedNodeComponentPlugin};
+    use kyoso_server::{AppState, app};
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::net::TcpListener;
+
+    /// Structural marker with a `#[require(...)]` that auto-inserts
+    /// the schema-synced component at `Default::default()`. Mirrors how
+    /// `kyoso_circuit_client`'s `on_circuit_node_added` observer inserts
+    /// `Mesh3d` (which auto-requires `Transform::default()`) — the
+    /// trigger that caused the production "snap to origin" failure.
+    #[derive(Component, Default, Clone, Debug, PartialEq, Reflect)]
+    #[reflect(Component, Default)]
+    #[require(Counted)]
+    struct AutoRequiringMarker;
+
+    #[derive(Component, Default, Clone, Debug, PartialEq, Reflect)]
+    #[reflect(Component, Default)]
+    struct MarkerEdge;
+
+    fn build_marker_app(server: SocketAddr, room: &str) -> App {
+        let mut app = App::new();
+        app.add_plugins((
+            GraphManagerPlugin::<AutoRequiringMarker, MarkerEdge>::new(),
+            GraphSyncPlugin::<AutoRequiringMarker, MarkerEdge>::new(
+                format!("ws://{server}/ws"),
+                room,
+            ),
+            SchemaSyncedNodeComponentPlugin::<AutoRequiringMarker, MarkerEdge, Counted>::default(),
+        ));
+        app
+    }
+
+    async fn spawn_server_with(state: AppState) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let router = app(state);
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        addr
+    }
+
+    /// A spawns a node with `Counted{edits=7}`, snapshot/GC fires so the
+    /// only path that delivers state to B is the snapshot hydrator, B
+    /// joins and uses `AutoRequiringMarker` (which auto-inserts
+    /// `Counted::default()`).
+    ///
+    /// Assertion: A's `Counted{edits=7}` stays at 7 after B has been
+    /// connected for several frames. Pre-fix, B would emit Dec(7) on
+    /// frame N+1 and A's component would drift to 0.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn auto_required_default_on_snapshot_join_does_not_clobber_existing_state() {
+        let state = AppState::in_memory();
+        let rooms = state.rooms.clone();
+        let addr = spawn_server_with(state).await;
+        let handle = tokio::runtime::Handle::current();
+
+        let rooms_inner = Arc::clone(&rooms);
+        tokio::task::spawn_blocking(move || {
+            // A uses the no-auto-require app so its initial spawn carries
+            // the real `Counted { edits: 7 }` directly; we only need the
+            // auto-require behavior on the JOINER side to reproduce the bug.
+            let mut a = build_counted_app(addr, "reconnect-clobber");
+            pump_until(
+                &mut [&mut a],
+                Duration::from_secs(2),
+                "A connected",
+                |apps| sync_status(apps[0]).is_connected(),
+            );
+            a.world_mut().spawn(Counted { edits: 7 });
+
+            // Wait for A's own echo + Ack to settle on the server.
+            pump_until(
+                &mut [&mut a],
+                Duration::from_secs(3),
+                "A applied own echo",
+                |apps| {
+                    let mut q = apps[0].world_mut().query::<&Counted>();
+                    q.iter(apps[0].world()).any(|c| c.edits == 7)
+                },
+            );
+            for _ in 0..30 {
+                a.update();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+
+            let dropped: u64 = handle.block_on(async {
+                let room = rooms_inner
+                    .get_or_create("reconnect-clobber")
+                    .await
+                    .expect("room");
+                room.take_snapshot_all().await;
+                room.run_gc_all().await
+            });
+            assert!(
+                dropped > 0,
+                "expected GC to compact below snapshot, got {dropped}"
+            );
+
+            // B uses the auto-requiring marker app — its
+            // `project_snapshot` spawn will trigger
+            // `#[require(Counted)]` to insert `Counted::default()`
+            // before the schema doc projects the hydrated value back.
+            let mut b = build_marker_app(addr, "reconnect-clobber");
+            pump_until(
+                &mut [&mut a, &mut b],
+                Duration::from_secs(3),
+                "B hydrated edits=7 from snapshot",
+                |apps| {
+                    let mut q = apps[1].world_mut().query::<&Counted>();
+                    q.iter(apps[1].world()).any(|c| c.edits == 7)
+                },
+            );
+
+            // Pump well past the point where B could have emitted
+            // and A could have applied a spurious Dec(7).
+            for _ in 0..60 {
+                a.update();
+                b.update();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+
+            // STABILITY ASSERTION — the regression. Pre-fix, A's
+            // `edits` field would be 0 here because B's snapshot-spawn
+            // emitted Dec(7) and A applied it.
+            let a_edits = {
+                let mut q = a.world_mut().query::<&Counted>();
+                q.iter(a.world())
+                    .next()
+                    .map(|c| c.edits)
+                    .expect("A has a Counted")
+            };
+            assert_eq!(
+                a_edits, 7,
+                "A's Counted{{edits}} was clobbered by B's snapshot-join — \
+                 detect_typed_changes emitted Dec on the auto-required \
+                 default component before project_typed_to_bevy could \
+                 write the hydrated value back."
+            );
+
+            let b_edits = {
+                let mut q = b.world_mut().query::<&Counted>();
+                q.iter(b.world())
+                    .next()
+                    .map(|c| c.edits)
+                    .expect("B has a Counted")
+            };
+            assert_eq!(
+                b_edits, 7,
+                "B should have converged to edits=7 via snapshot hydration."
+            );
+        })
+        .await
+        .expect("worker panic");
     }
 }

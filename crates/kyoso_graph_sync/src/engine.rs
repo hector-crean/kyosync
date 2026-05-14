@@ -21,11 +21,23 @@
 //! Bevy ECS, no presence concept).
 
 use bevy::prelude::*;
-use kyoso_crdt::{ApplyError, CrdtId, EmptySchema, GlobalSeq, IdGen, PeerId};
-use kyoso_graph_crdt::{EdgeCategory, GraphBackend, OpKind, Snapshot};
+use kyoso_crdt::{ApplyError, CrdtId, EmptySchema, GlobalSeq, IdGen, OpaqueSchemaState, PeerId};
+use kyoso_graph_crdt::{EdgeCategory, GraphBackend, GraphTopology, OpKind};
 use std::collections::HashSet;
 
 type Op = kyoso_crdt::Op<OpKind>;
+/// In-memory snapshot of the structural graph backend. Resolves to the
+/// generic [`kyoso_crdt::Snapshot`] over [`GraphTopology`] + [`EmptySchema`]
+/// since the engine owns structure only — typed properties live in
+/// per-schema [`crate::schema_sync::SchemaDoc`] resources.
+pub type EngineSnapshot = kyoso_crdt::Snapshot<GraphTopology, EmptySchema>;
+
+/// Wire-format snapshot as produced by the server. Carries the same
+/// structural topology as [`EngineSnapshot`] **plus** opaque per-entity
+/// CRDT state ([`OpaqueSchemaState`]) so late joiners can hydrate
+/// typed [`crate::schema_sync::SchemaDoc`] resources from the snapshot
+/// rather than replaying every property op from sequence 0.
+pub type ServerSnapshot = kyoso_crdt::Snapshot<GraphTopology, OpaqueSchemaState>;
 
 /// Client-side graph sync resource.
 ///
@@ -128,12 +140,12 @@ impl ClientSyncEngine {
         self.inner.apply_remote(op)
     }
 
-    pub fn restore(&mut self, snap: Snapshot) {
+    pub fn restore(&mut self, snap: EngineSnapshot) {
         self.inner.restore(snap);
     }
 
     #[must_use]
-    pub fn snapshot(&self) -> Snapshot {
+    pub fn snapshot(&self) -> EngineSnapshot {
         self.inner.snapshot()
     }
 
@@ -157,8 +169,8 @@ impl ClientSyncEngine {
 
     /// Mint a fresh op-id from the engine's id generator. Typed
     /// plugins use this to keep id-generation centralized.
-    pub fn next_id(&mut self) -> CrdtId {
-        self.inner.next_id()
+    pub fn mint_id(&mut self) -> CrdtId {
+        self.inner.mint_id()
     }
 
     /// Push a pre-built [`Op`] onto the pending queue. The outbound

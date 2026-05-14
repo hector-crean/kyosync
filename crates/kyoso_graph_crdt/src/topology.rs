@@ -51,14 +51,14 @@ struct EdgeStructure {
 }
 
 /// Snapshot format for graph topology.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GraphSnapshot {
     pub nodes: Vec<NodeSnap>,
     pub edges: Vec<EdgeSnap>,
 }
 
 /// Per-node snapshot entry.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NodeSnap {
     pub id: CrdtId,
     pub order_key: Option<String>,
@@ -66,7 +66,7 @@ pub struct NodeSnap {
 }
 
 /// Per-edge snapshot entry.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EdgeSnap {
     pub id: CrdtId,
     pub from: CrdtId,
@@ -165,20 +165,39 @@ impl GraphTopology {
         })
     }
 
+    /// Iterate every live (non-tombstoned) node id. Used by the
+    /// invariants module to walk the topology without exposing the
+    /// underlying `HashMap`.
+    pub fn live_node_ids(&self) -> impl Iterator<Item = CrdtId> + '_ {
+        self.nodes
+            .iter()
+            .filter_map(|(id, rec)| if rec.tombstoned { None } else { Some(*id) })
+    }
+
+    /// Iterate every live (non-tombstoned) edge id.
+    pub fn live_edge_ids(&self) -> impl Iterator<Item = CrdtId> + '_ {
+        self.edges
+            .iter()
+            .filter_map(|(id, rec)| if rec.tombstoned { None } else { Some(*id) })
+    }
+
+    /// `true` if `id` names a live edge.
+    #[must_use]
+    pub fn is_live_edge(&self, id: CrdtId) -> bool {
+        self.edges
+            .get(&id)
+            .map(|rec| !rec.tombstoned)
+            .unwrap_or(false)
+    }
+
     /// True iff making `proposed_parent` the new parent of `target`
     /// would form a cycle.
+    ///
+    /// Inherent forwarder so chaos-sim and apply hot paths don't have
+    /// to bring [`crate::GraphView`] into scope. The implementation is
+    /// the trait's canonical [`crate::would_create_cycle`].
     pub fn would_create_cycle(&self, target: CrdtId, proposed_parent: CrdtId) -> bool {
-        if target == proposed_parent {
-            return true;
-        }
-        let mut cursor = Some(proposed_parent);
-        while let Some(id) = cursor {
-            if id == target {
-                return true;
-            }
-            cursor = self.nodes.get(&id).and_then(|rec| rec.tree_parent);
-        }
-        false
+        crate::view::would_create_cycle(self, target, proposed_parent)
     }
 }
 
@@ -211,11 +230,28 @@ impl Topology for GraphTopology {
                 from,
                 to,
             } => {
-                // Un-tombstone on echo (see backend.rs:490-520 for rationale)
+                // Endpoint-liveness check: if either endpoint was
+                // tombstoned at a seq below this AddRefEdge (i.e.,
+                // a RemoveNode beat the AddRefEdge to apply order on
+                // every replica deterministically), the edge must
+                // arrive *already tombstoned*. Otherwise we'd leave
+                // a live edge pointing at a dead node — the
+                // OrphanEdge invariant case.
+                let from_live = self
+                    .nodes
+                    .get(from)
+                    .map(|n| !n.tombstoned)
+                    .unwrap_or(false);
+                let to_live = self
+                    .nodes
+                    .get(to)
+                    .map(|n| !n.tombstoned)
+                    .unwrap_or(false);
+                let cascade_tombstoned = !(from_live && to_live);
                 self.edges
                     .entry(ctx.op_id)
                     .and_modify(|rec| {
-                        rec.tombstoned = false;
+                        rec.tombstoned = cascade_tombstoned;
                         rec.from = *from;
                         rec.to = *to;
                         rec.category = category.clone();
@@ -224,7 +260,7 @@ impl Topology for GraphTopology {
                         from: *from,
                         to: *to,
                         category: category.clone(),
-                        tombstoned: false,
+                        tombstoned: cascade_tombstoned,
                     });
             }
             OpKind::RemoveRefEdge { target } => {

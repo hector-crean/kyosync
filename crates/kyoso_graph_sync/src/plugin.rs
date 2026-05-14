@@ -23,16 +23,17 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use bevy::prelude::*;
-use kyoso_crdt::{Op, PeerId};
+use kyoso_crdt::{Op, OpaqueSchemaState, PathSegment};
 use kyoso_graph::components::{EdgeFrom, EdgeTo, IncomingEdges};
 use kyoso_graph::queries::GraphComponent;
 use kyoso_graph::tree::{OrderKey, TreeEdge, TreeParent};
-use kyoso_graph_crdt::{OpKind, Snapshot, graph_model};
+use kyoso_graph_crdt::{GraphSnapshot, OpKind, graph_model};
 use kyoso_sync::{ModelRegistry, PeerIdGen, SyncStatus, WsBridge, WsInbound};
 
 use crate::category::ApplyEdgeCategory;
-use crate::engine::ClientSyncEngine;
+use crate::engine::{ClientSyncEngine, EngineSnapshot, ServerSnapshot};
 use crate::index::EntityCrdtIndex;
+use crate::schema_sync::{SchemaHydrators, TargetKind};
 
 type GraphOp = Op<OpKind>;
 
@@ -54,8 +55,8 @@ impl<T> Syncable for T where
 /// applied it. Typed plugins
 /// ([`crate::SchemaSyncedNodeComponentPlugin`],
 /// [`crate::SyncedEdgeCategoryPlugin`] projection) subscribe to this
-/// stream to route ops to per-schema `Document<S>` instances after the
-/// engine's canonical apply has run.
+/// stream to route ops to per-schema [`crate::SchemaDoc<S>`] instances
+/// after the engine's canonical apply has run.
 #[derive(Message, Event, Clone, Debug)]
 pub struct RemoteOpApplied(pub GraphOp);
 
@@ -67,8 +68,8 @@ pub struct RemoteOpApplied(pub GraphOp);
 ///   [`SyncTransportPlugin`](kyoso_sync::SyncTransportPlugin) yourself,
 ///   then `GraphSyncPlugin::<N, E>::default()`.
 /// - **Single-model** (graph only): use [`Self::new`], which also pulls
-///   in `SyncTransportPlugin` so the connection is set up automatically
-///   — drop-in equivalent to the legacy `CrdtSyncPlugin::new`.
+///   in `SyncTransportPlugin` so the connection is set up automatically.
+///   Mirrors [`kyoso_comments_sync::CommentsSyncPlugin::new`].
 ///
 /// ```ignore
 /// // Multi-model
@@ -106,8 +107,8 @@ impl<N, E> Default for GraphSyncPlugin<N, E> {
 impl<N, E> GraphSyncPlugin<N, E> {
     /// Single-model convenience constructor. Bundles a
     /// [`SyncTransportPlugin`](kyoso_sync::SyncTransportPlugin) with
-    /// `url` + `room` during `build`. Equivalent to the legacy
-    /// `CrdtSyncPlugin::new`.
+    /// `url` + `room` during `build`. For multi-model apps prefer
+    /// [`Self::default`] and add the transport plugin yourself.
     pub fn new(url: impl Into<String>, room: impl Into<String>) -> Self {
         Self {
             transport: Some((url.into(), room.into())),
@@ -200,10 +201,35 @@ fn graph_inbound_system<N, E>(
                     continue;
                 };
                 if let Some(snap_bytes) = &greeting.snapshot_payload {
-                    match postcard::from_bytes::<Snapshot>(snap_bytes) {
+                    match postcard::from_bytes::<ServerSnapshot>(snap_bytes) {
                         Ok(snap) => {
-                            engine.restore(snap.clone());
-                            project_snapshot::<N, E>(&mut commands, &mut index, &snap);
+                            // The engine holds only structural state
+                            // (EmptySchema). Strip the opaque typed
+                            // schemas off the snapshot before handing
+                            // it to engine.restore — the typed state
+                            // is hydrated separately into the per-
+                            // component SchemaDoc resources below.
+                            let structural: EngineSnapshot = kyoso_crdt::Snapshot {
+                                at_seq: snap.at_seq,
+                                topology: snap.topology.clone(),
+                                schemas: std::collections::BTreeMap::new(),
+                            };
+                            engine.restore(structural);
+                            project_snapshot::<N, E>(
+                                &mut commands,
+                                &mut index,
+                                &snap.topology,
+                            );
+                            // Hand the opaque typed-schema state to
+                            // the registered hydrators. Deferred via
+                            // Commands because the hydrator fns need
+                            // `&mut World` to access per-schema
+                            // `SchemaDoc<S>` resources without
+                            // statically knowing the `S`.
+                            let typed_state = snap.schemas;
+                            commands.queue(move |world: &mut World| {
+                                hydrate_typed_schemas(world, typed_state);
+                            });
                         }
                         Err(e) => tracing::warn!(?e, "decode graph snapshot"),
                     }
@@ -436,12 +462,12 @@ fn project_edge<N, E>(
 fn project_snapshot<N, E>(
     commands: &mut Commands,
     index: &mut EntityCrdtIndex,
-    snap: &Snapshot,
+    topo: &GraphSnapshot,
 ) where
     N: Syncable,
     E: Syncable,
 {
-    for n in &snap.nodes {
+    for n in &topo.nodes {
         if !index.entity_of_node.contains_key(&n.id) {
             let entity = commands.spawn(N::default()).id();
             index.node_of_entity.insert(entity, n.id);
@@ -451,7 +477,7 @@ fn project_snapshot<N, E>(
             }
         }
     }
-    for n in &snap.nodes {
+    for n in &topo.nodes {
         if let Some(parent_id) = n.tree_parent {
             let (Some(&child_e), Some(&parent_e)) = (
                 index.entity_of_node.get(&n.id),
@@ -469,8 +495,64 @@ fn project_snapshot<N, E>(
                 });
         }
     }
-    for e in &snap.edges {
+    for e in &topo.edges {
         project_edge::<N, E>(commands, index, e.id, e.from, e.to);
+    }
+}
+
+/// Install the opaque typed-schema state from a snapshot into the
+/// registered per-component `SchemaDoc` resources.
+///
+/// Runs deferred via `commands.queue(...)` from the Welcome handler so
+/// it has `&mut World` (needed to call the runtime-dispatched
+/// [`HydratorFn`](crate::schema_sync::HydratorFn)s — each one talks to
+/// a different `SchemaDoc<C::Schema>` resource type, so the dispatch
+/// table is keyed by `(TargetKind, schema name)` and resolved at run
+/// time).
+///
+/// By the time this runs, [`project_snapshot`] has already created and
+/// indexed every entity present in the snapshot, so the node/edge
+/// classification below is reliable.
+fn hydrate_typed_schemas(
+    world: &mut World,
+    typed_state: std::collections::BTreeMap<kyoso_crdt::CrdtId, OpaqueSchemaState>,
+) {
+    let hydrators = match world.get_resource::<SchemaHydrators>() {
+        Some(h) if !h.by_key.is_empty() => h.by_key.clone(),
+        _ => return,
+    };
+    // Snapshot the index keys for classification — release the borrow
+    // before invoking hydrators (they need mutable World access).
+    let (node_ids, edge_ids): (
+        std::collections::HashSet<kyoso_crdt::CrdtId>,
+        std::collections::HashSet<kyoso_crdt::CrdtId>,
+    ) = {
+        let index = world.resource::<EntityCrdtIndex>();
+        (
+            index.entity_of_node.keys().copied().collect(),
+            index.entity_of_edge.keys().copied().collect(),
+        )
+    };
+
+    for (target, opaque_state) in typed_state {
+        let kind = if node_ids.contains(&target) {
+            TargetKind::Node
+        } else if edge_ids.contains(&target) {
+            TargetKind::Edge
+        } else {
+            // Target was tombstoned before the snapshot, so it isn't in
+            // the topology projection. Nothing to hydrate.
+            continue;
+        };
+        for (path, field) in opaque_state.fields {
+            let Some(PathSegment::Field(name)) = path.0.first().cloned() else {
+                continue;
+            };
+            let inner_path = kyoso_crdt::Path(path.0[1..].to_vec());
+            if let Some(hydrate_fn) = hydrators.get(&(kind, name)).copied() {
+                hydrate_fn(world, target, inner_path, field);
+            }
+        }
     }
 }
 
@@ -616,9 +698,3 @@ pub(crate) fn outbound_system<N, E>(
         last_ack.0 = applied;
     }
 }
-
-// Re-export PeerId at the crate root convenience for callers wiring
-// against `kyoso_graph_sync::PeerId` directly.
-pub use kyoso_sync::SyncStatus as _SyncStatusReexportProbe;
-#[allow(dead_code)]
-fn _peer_id_ref(_p: PeerId) {}
