@@ -4133,6 +4133,7 @@ dependencies = [
  "kyoso_graph",
  "kyoso_graph_crdt",
  "kyoso_graph_sync",
+ "kyoso_polyline",
  "kyoso_server",
  "kyoso_sync",
  "once_cell",
@@ -4252,8 +4253,10 @@ name = "kyoso_graph"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "kyoso_crdt",
+ "kyoso_graph_crdt",
  "petgraph 0.6.5",
- "rand 0.8.6",
+ "proptest",
  "serde",
 ]
 
@@ -4323,6 +4326,29 @@ dependencies = [
  "bitflags 2.11.1",
  "bytemuck",
  "rand 0.8.6",
+]
+
+[[package]]
+name = "kyoso_scenarios"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bevy",
+ "clap",
+ "crossbeam-channel",
+ "kyoso_circuit",
+ "kyoso_circuit_client",
+ "kyoso_crdt",
+ "kyoso_graph",
+ "kyoso_graph_crdt",
+ "kyoso_graph_sync",
+ "kyoso_server",
+ "kyoso_sync",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

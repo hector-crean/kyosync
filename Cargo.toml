@@ -41,6 +41,7 @@ kyoso_polyline = { path = "crates/kyoso_polyline" }
 kyoso_client = { path = "apps/kyoso_client" }
 kyoso_circuit = { path = "crates/kyoso_circuit" }
 kyoso_circuit_client = { path = "apps/kyoso_circuit_client" }
+kyoso_scenarios = { path = "crates/kyoso_scenarios" }
 
 # ── Bevy ───────────────────────────────────────────────────────────────────────
 # `default-features = false` lets each crate opt in to exactly the Bevy features

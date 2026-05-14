@@ -50,3 +50,15 @@ path = "src/bin/kyoso_wire_probe.rs"
 [[bin]]
 name = "kyoso_peer_sweep"
 path = "src/bin/kyoso_peer_sweep.rs"
+
+[[bin]]
+name = "kyoso_topology_probe"
+path = "src/bin/kyoso_topology_probe.rs"
+
+[[bin]]
+name = "kyoso_soak"
+path = "src/bin/kyoso_soak.rs"
+
+[[bin]]
+name = "kyoso_replay_differential"
+path = "src/bin/kyoso_replay_differential.rs"

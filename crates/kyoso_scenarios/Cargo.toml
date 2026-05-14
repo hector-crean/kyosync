@@ -1,0 +1,36 @@
+[package]
+name = "kyoso_scenarios"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Scripted multi-client scenarios for the bench harness. Spawns the kyoso_server in-process plus N headless Bevy clients, drives them through join/leave/reconnect scripts, captures per-peer state, and emits JSON divergence reports for Claude / agents to consume."
+
+[dependencies]
+kyoso_crdt           = { workspace = true }
+kyoso_graph          = { workspace = true }
+kyoso_graph_crdt     = { workspace = true }
+kyoso_graph_sync     = { workspace = true }
+kyoso_circuit        = { workspace = true }
+kyoso_circuit_client = { workspace = true }
+kyoso_server         = { workspace = true }
+kyoso_sync           = { workspace = true }
+
+bevy = { workspace = true, features = ["default"] }
+
+axum         = { workspace = true }
+tokio        = { workspace = true }
+crossbeam-channel = { workspace = true }
+clap         = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+tracing      = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "kyoso_scenarios"
+path = "src/bin/scenarios.rs"

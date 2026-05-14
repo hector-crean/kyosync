@@ -91,6 +91,13 @@ pub struct ChaosReport {
     pub re_delivered_after_drop: u64,
     /// Final applied_seq across peers (should be identical).
     pub peer_applied_seqs: Vec<GlobalSeq>,
+    /// Structural invariants checked on the canonical replica at
+    /// end-of-sim. Empty on a clean run. Populated by the
+    /// `invariants` closure passed to [`run_chaos_sim`] /
+    /// [`sweep_seeds`] — defaults to empty for models without
+    /// shape-specific assertions.
+    #[serde(default)]
+    pub invariant_violations: Vec<String>,
 }
 
 impl ChaosReport {
@@ -128,11 +135,12 @@ struct PendingDelivery<K> {
 /// `postcard` and asserting all encoded blobs match — uses the
 /// snapshot's existing `Serialize` impl rather than relying on
 /// `PartialEq` (which not every `CrdtModel::State` implements).
-pub fn run_chaos_sim<M, F>(cfg: ChaosConfig, mut mutate: F) -> ChaosReport
+pub fn run_chaos_sim<M, F, I>(cfg: ChaosConfig, mut mutate: F, invariants: I) -> ChaosReport
 where
     M: CrdtModel,
     M::State: PartialEq + std::fmt::Debug,
     F: FnMut(&mut M, &mut StdRng, usize, PeerId),
+    I: Fn(&M) -> Vec<String>,
 {
     assert!(cfg.peers > 0, "chaos sim requires at least one peer");
     let mut rng = StdRng::seed_from_u64(cfg.seed);
@@ -284,6 +292,8 @@ where
         }
     }
 
+    let invariant_violations = invariants(&canonical);
+
     ChaosReport {
         config: cfg,
         converged,
@@ -291,6 +301,7 @@ where
         deliveries,
         re_delivered_after_drop,
         peer_applied_seqs,
+        invariant_violations,
     }
 }
 
@@ -345,23 +356,25 @@ fn drain_contiguous<M, K>(
 
 /// Sweep many seeds with the same `cfg` (other than `seed`). Useful
 /// for shaking out flaky-seed convergence bugs — proptest-lite.
-pub fn sweep_seeds<M, F>(
+pub fn sweep_seeds<M, F, I>(
     base_cfg: ChaosConfig,
     seeds: impl IntoIterator<Item = u64>,
     mutate: F,
+    invariants: I,
 ) -> SweepReport
 where
     M: CrdtModel,
     M::State: PartialEq + std::fmt::Debug,
     F: FnMut(&mut M, &mut StdRng, usize, PeerId) + Clone,
+    I: Fn(&M) -> Vec<String> + Clone,
 {
     let mut runs = Vec::new();
     let mut all_converged = true;
     for seed in seeds {
         let mut cfg = base_cfg.clone();
         cfg.seed = seed;
-        let report = run_chaos_sim::<M, _>(cfg, mutate.clone());
-        if !report.converged {
+        let report = run_chaos_sim::<M, _, _>(cfg, mutate.clone(), invariants.clone());
+        if !report.converged || !report.invariant_violations.is_empty() {
             all_converged = false;
         }
         runs.push(report);

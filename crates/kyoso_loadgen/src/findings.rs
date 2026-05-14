@@ -55,6 +55,15 @@ pub struct Summary {
     pub loadgen: LoadgenSummary,
     pub criterion: CriterionSummary,
     pub reconnect: ReconnectSummary,
+    pub scenarios: ScenariosSummary,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ScenariosSummary {
+    pub run: usize,
+    pub converged: usize,
+    pub diverged: usize,
+    pub aborted: usize,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -146,6 +155,20 @@ pub fn summarize(reports_dir: &Path) -> Findings {
                     summary.loadgen.profiles.insert(profile_name, profile);
                     findings.append(&mut fs);
                 }
+            } else if name.starts_with("scenario-") && name.ends_with(".json") {
+                if let Some((kind, mut fs)) = parse_scenario(&path) {
+                    summary.scenarios.run += 1;
+                    match kind {
+                        ScenarioParseKind::Converged => summary.scenarios.converged += 1,
+                        ScenarioParseKind::Diverged => summary.scenarios.diverged += 1,
+                        ScenarioParseKind::Aborted => summary.scenarios.aborted += 1,
+                    }
+                    findings.append(&mut fs);
+                }
+            } else if name == "topology-probe.json" {
+                if let Some(mut fs) = parse_topology_probe(&path) {
+                    findings.append(&mut fs);
+                }
             }
         }
     }
@@ -196,17 +219,24 @@ fn parse_chaos(path: &Path) -> Option<(ChaosCount, Vec<Finding>)> {
     let mut findings = Vec::new();
     let total_seeds = report.runs.len();
     let mut diverged_seeds = 0usize;
+    let model_label = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown")
+        .strip_prefix("chaos-")
+        .unwrap_or("unknown")
+        .to_string();
     for run in &report.runs {
         if !run.converged {
             diverged_seeds += 1;
-            let model = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown")
-                .strip_prefix("chaos-")
-                .unwrap_or("unknown")
-                .to_string();
-            findings.push(divergence_finding(&model, run));
+            findings.push(divergence_finding(&model_label, run));
+        }
+        if !run.invariant_violations.is_empty() {
+            // Topology invariants — surfaced separately from
+            // pairwise divergence because they can fire even on a
+            // peers-agreed run (every replica is wrong the same way).
+            diverged_seeds += 1;
+            findings.push(invariant_finding(&model_label, run));
         }
     }
     Some((
@@ -216,6 +246,43 @@ fn parse_chaos(path: &Path) -> Option<(ChaosCount, Vec<Finding>)> {
         },
         findings,
     ))
+}
+
+fn invariant_finding(model: &str, run: &ChaosRunShape) -> Finding {
+    let mut detail = format!(
+        "{} invariant violation(s) on canonical at seed=0x{:X} (peers={}, rounds={}, drop={}):",
+        run.invariant_violations.len(),
+        run.config.seed,
+        run.config.peers,
+        run.config.op_rounds,
+        run.config.drop_probability,
+    );
+    for v in run.invariant_violations.iter().take(8) {
+        detail.push_str("\n  - ");
+        detail.push_str(v);
+    }
+    Finding {
+        severity: Severity::Critical,
+        layer: "chaos".to_string(),
+        title: format!(
+            "{model} chaos sim: topology invariant violated at seed 0x{:X}",
+            run.config.seed
+        ),
+        details: detail,
+        repro: Some(format!(
+            "just chaos-graph-workload {model} {} {} {} {} 1 \
+             && # then re-run with --first-seed 0x{:X}",
+            run.config.peers,
+            run.config.op_rounds,
+            run.config.drop_probability,
+            run.config.max_delay_rounds,
+            run.config.seed,
+        )),
+        suspected_files: vec![
+            "crates/kyoso_graph_crdt/src/topology.rs".to_string(),
+            "crates/kyoso_graph_crdt/src/invariants.rs".to_string(),
+        ],
+    }
 }
 
 struct ChaosCount {
@@ -237,6 +304,8 @@ struct ChaosRunShape {
     ops_issued: u64,
     re_delivered_after_drop: u64,
     peer_applied_seqs: Vec<u64>,
+    #[serde(default)]
+    invariant_violations: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -431,6 +500,105 @@ fn parse_criterion(crit_dir: &Path) -> (CriterionSummary, Vec<Finding>) {
     (summary, Vec::new())
 }
 
+// ---------------------------------------------------------------------------
+// Scenario reports (kyoso_scenarios). Surfaces divergence as a
+// critical finding so the agent loop picks it up first.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct ScenarioFileShape {
+    scenario: String,
+    status: String,
+    summary: String,
+    #[serde(default)]
+    checkpoints: Vec<serde_json::Value>,
+}
+
+enum ScenarioParseKind {
+    Converged,
+    Diverged,
+    Aborted,
+}
+
+fn parse_scenario(path: &Path) -> Option<(ScenarioParseKind, Vec<Finding>)> {
+    let bytes = fs::read(path).ok()?;
+    let report: ScenarioFileShape = serde_json::from_slice(&bytes).ok()?;
+    let kind = match report.status.as_str() {
+        "converged" => ScenarioParseKind::Converged,
+        "diverged" => ScenarioParseKind::Diverged,
+        "aborted" => ScenarioParseKind::Aborted,
+        _ => return None,
+    };
+    let mut findings = Vec::new();
+    match kind {
+        ScenarioParseKind::Converged => {
+            findings.push(Finding {
+                severity: Severity::Info,
+                layer: "scenarios".to_string(),
+                title: format!("scenario `{}` converged", report.scenario),
+                details: report.summary.clone(),
+                repro: Some(format!(
+                    "just scenario {}",
+                    report.scenario
+                )),
+                suspected_files: vec![],
+            });
+        }
+        ScenarioParseKind::Diverged => {
+            let mut detail = report.summary.clone();
+            // Dig into the first divergent checkpoint and bundle its
+            // first few divergences for the agent to read directly.
+            for cp in &report.checkpoints {
+                let label = cp
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(unnamed)");
+                let divs = cp.get("divergences").and_then(|v| v.as_array());
+                if let Some(divs) = divs {
+                    if !divs.is_empty() {
+                        detail.push_str(&format!("\n\ncheckpoint `{label}`:"));
+                        for d in divs.iter().take(8) {
+                            if let Some(s) = d.get("detail").and_then(|v| v.as_str()) {
+                                detail.push_str("\n  - ");
+                                detail.push_str(s);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+            findings.push(Finding {
+                severity: Severity::Critical,
+                layer: "scenarios".to_string(),
+                title: format!(
+                    "scenario `{}` diverged between peers",
+                    report.scenario
+                ),
+                details: detail,
+                repro: Some(format!("just scenario {}", report.scenario)),
+                suspected_files: vec![
+                    "crates/kyoso_graph_sync/src/plugin.rs".to_string(),
+                    "crates/kyoso_graph_sync/src/schema_sync.rs".to_string(),
+                    "crates/kyoso_graph_sync/src/engine.rs".to_string(),
+                ],
+            });
+        }
+        ScenarioParseKind::Aborted => {
+            findings.push(Finding {
+                severity: Severity::High,
+                layer: "scenarios".to_string(),
+                title: format!("scenario `{}` aborted (timeout / panic)", report.scenario),
+                details: report.summary.clone(),
+                repro: Some(format!("just scenario {}", report.scenario)),
+                suspected_files: vec![
+                    "crates/kyoso_scenarios/src/scenarios.rs".to_string(),
+                ],
+            });
+        }
+    }
+    Some((kind, findings))
+}
+
 fn walk_criterion(dir: &Path, out: &mut Vec<String>, prefix: &Path) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -480,6 +648,13 @@ impl Findings {
             } else {
                 String::new()
             },
+        ));
+        out.push_str(&format!(
+            "- **Scenarios**: {} run, {} converged, {} diverged, {} aborted\n",
+            self.summary.scenarios.run,
+            self.summary.scenarios.converged,
+            self.summary.scenarios.diverged,
+            self.summary.scenarios.aborted,
         ));
         out.push_str(&format!(
             "- **Loadgen**: {} profile{}\n",
@@ -549,4 +724,89 @@ impl Findings {
         }
         out
     }
+}
+
+// ---------------------------------------------------------------------------
+// Topology-probe report: shape-by-shape build/snapshot/restore/cycle
+// timings + structural invariants. One finding per shape with
+// violations. No-violation shapes surface as Info entries so the agent
+// can grep their build_ops_per_sec / snapshot_us for regressions.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct TopologyProbeReport {
+    shapes: Vec<TopologyShapeReport>,
+    #[allow(dead_code)]
+    total_invariant_violations: usize,
+}
+
+#[derive(Deserialize)]
+struct TopologyShapeReport {
+    name: String,
+    node_count: usize,
+    edge_count: usize,
+    #[allow(dead_code)]
+    build_ops: usize,
+    #[allow(dead_code)]
+    build_us: u128,
+    build_ops_per_sec: f64,
+    snapshot_us: u128,
+    restore_us: u128,
+    cycle_check_us: u128,
+    #[allow(dead_code)]
+    cycle_check_queries: usize,
+    #[serde(default)]
+    invariant_violations: Vec<serde_json::Value>,
+}
+
+fn parse_topology_probe(path: &Path) -> Option<Vec<Finding>> {
+    let bytes = fs::read(path).ok()?;
+    let report: TopologyProbeReport = serde_json::from_slice(&bytes).ok()?;
+    let mut findings = Vec::new();
+    for shape in &report.shapes {
+        if !shape.invariant_violations.is_empty() {
+            let mut detail = format!(
+                "{} ({} nodes, {} edges): {} invariant violation(s)",
+                shape.name,
+                shape.node_count,
+                shape.edge_count,
+                shape.invariant_violations.len()
+            );
+            for v in shape.invariant_violations.iter().take(8) {
+                detail.push_str("\n  - ");
+                detail.push_str(&v.to_string());
+            }
+            findings.push(Finding {
+                severity: Severity::Critical,
+                layer: "topology-probe".to_string(),
+                title: format!("topology shape `{}` violates invariants", shape.name),
+                details: detail,
+                repro: Some("just topology-probe".to_string()),
+                suspected_files: vec![
+                    "crates/kyoso_graph_crdt/src/topology.rs".to_string(),
+                    "crates/kyoso_graph_crdt/src/invariants.rs".to_string(),
+                ],
+            });
+        } else {
+            findings.push(Finding {
+                severity: Severity::Info,
+                layer: "topology-probe".to_string(),
+                title: format!(
+                    "topology shape `{}`: {} ops/s build, snap {} µs, restore {} µs, cycle-check {} µs",
+                    shape.name,
+                    shape.build_ops_per_sec as u64,
+                    shape.snapshot_us,
+                    shape.restore_us,
+                    shape.cycle_check_us,
+                ),
+                details: format!(
+                    "shape={}, nodes={}, edges={}",
+                    shape.name, shape.node_count, shape.edge_count
+                ),
+                repro: Some("just topology-probe".to_string()),
+                suspected_files: vec![],
+            });
+        }
+    }
+    Some(findings)
 }

@@ -123,6 +123,58 @@ chaos-comments PEERS="5" ROUNDS="200" DROP="0.15" DELAY="5" SEEDS="10":
         --seeds {{SEEDS}} \
         --output {{REPORT_DIR}}/chaos-comments.json
 
+# Per-workload graph chaos. `WORKLOAD` is one of `default`,
+# `tree-restructure`, `cascade-heavy`, `property-interleave`. Each
+# workload exercises a different op-mix profile — they share the
+# convergence + invariants asserts but stress different code paths.
+chaos-graph-workload WORKLOAD="default" PEERS="5" ROUNDS="200" DROP="0.15" DELAY="5" SEEDS="10":
+    @mkdir -p {{REPORT_DIR}}
+    cargo run --release --bin kyoso_chaos -- \
+        --model graph --workload {{WORKLOAD}} \
+        --peers {{PEERS}} --rounds {{ROUNDS}} \
+        --drop-prob {{DROP}} --max-delay {{DELAY}} \
+        --seeds {{SEEDS}} \
+        --output {{REPORT_DIR}}/chaos-graph-{{WORKLOAD}}.json
+
+# Shortcuts for the named workloads.
+chaos-tree-restructure: (chaos-graph-workload "tree-restructure")
+chaos-cascade-heavy: (chaos-graph-workload "cascade-heavy")
+chaos-property-interleave: (chaos-graph-workload "property-interleave")
+
+# Topology-shape stress + invariants check. Builds four reference
+# graphs (deep tree, wide tree, dense edges, worst-case cycle walk),
+# measures build + snapshot + restore + cycle-check cost on each,
+# and runs the structural invariants module. Exit code is non-zero
+# if any shape's invariants violate. Output:
+# {{REPORT_DIR}}/topology-probe.json.
+topology-probe:
+    @mkdir -p {{REPORT_DIR}}
+    cargo run --release --bin kyoso_topology_probe
+
+# Long-duration soak with windowed reports. Default 60s / 6 intervals
+# / 8 clients × 50 ops/s — light enough for CI, heavy enough to
+# surface p99 drift over a few minutes. Override DURATION for a real
+# hour-long soak: `just soak 3600 60` (60 windows of 60s).
+soak DURATION="60" INTERVALS="6" CLIENTS="8" RATE="50":
+    @mkdir -p {{REPORT_DIR}}
+    cargo run --release -p kyoso_loadgen --bin kyoso_soak -- \
+        --duration {{DURATION}} \
+        --intervals {{INTERVALS}} \
+        --clients {{CLIENTS}} \
+        --rate {{RATE}} \
+        --output {{REPORT_DIR}}/soak.json
+
+# Differential test: chaos sim's canonical replica vs. a fresh
+# stamped-seq-replay canonical. Catches sim-bookkeeping bugs that
+# would otherwise hide behind apparent CRDT divergence.
+replay-differential SEEDS="8" PEERS="5" ROUNDS="200" DROP="0.15" DELAY="5":
+    @mkdir -p {{REPORT_DIR}}
+    cargo run --release -p kyoso_loadgen --bin kyoso_replay_differential -- \
+        --peers {{PEERS}} --rounds {{ROUNDS}} \
+        --drop-prob {{DROP}} --max-delay {{DELAY}} \
+        --seeds {{SEEDS}} \
+        --output {{REPORT_DIR}}/replay-differential.json
+
 # Heavy stress: 8 peers × 500 rounds × 25 seeds, 30% drop, 10-round
 # max delay. Catches edge cases the default cadence misses. Slower.
 chaos-stress:
@@ -170,6 +222,32 @@ peer-sweep WRITERS="4" READERS="0,16,64,256,1024" RATE="10" DURATION="5":
 # territory the unified channel could never reach.
 peer-sweep-readers:
     @just peer-sweep 4 "0,64,256,1024,2048" 10 5
+
+# ---------------------------------------------------------------------
+# Layer 4d — scripted scenarios (real server + N headless Bevy clients)
+#
+# Spawns the kyoso_server in-process plus 1..N real headless circuit
+# clients via `kyoso_circuit_client::AppPlugin`, drives them through
+# join / leave / reconnect / snapshot+GC scripts, captures each
+# peer's state, and emits divergence reports under
+# target/harness-reports/scenario-<name>.json. The path Claude reads
+# to diagnose state-mutation-on-join/leave bugs end-to-end.
+# ---------------------------------------------------------------------
+
+# Run every known scenario. Exit code is non-zero if any diverges.
+scenarios:
+    @mkdir -p {{REPORT_DIR}}
+    cargo run --release -p kyoso_scenarios --bin kyoso_scenarios -- --all
+
+# Run a single named scenario. `just scenario late_join` etc.
+# Use `just scenario list` to print the catalog.
+scenario NAME:
+    @mkdir -p {{REPORT_DIR}}
+    @if [ "{{NAME}}" = "list" ]; then \
+        cargo run --release -p kyoso_scenarios --bin kyoso_scenarios -- --list; \
+    else \
+        cargo run --release -p kyoso_scenarios --bin kyoso_scenarios -- --scenario {{NAME}}; \
+    fi
 
 # ---------------------------------------------------------------------
 # All-in-one
