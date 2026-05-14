@@ -3,8 +3,9 @@
 //! In 3D the place tool drops a new circuit-component entity (Resistor
 //! / Capacitor / …) at the world position where the cursor ray
 //! intersects the active layer's xz-plane. The component kind comes
-//! from [`PlaceKind`] and the target board layer from [`PlaceLayer`],
-//! both set by toolbar buttons.
+//! from [`PlaceKind`]; the target board layer comes from the shared
+//! [`LayerManager`](crate::LayerManager) so the same "currently active
+//! layer" notion is read by place / connect / grid alike.
 //!
 //! Active commands:
 //! - `SpawnAt { position, kind, layer }` — programmatic spawn at a
@@ -29,18 +30,6 @@ use crate::tool::{Tool, ToolCommand};
 /// when the user clicks one of the Place-X buttons.
 #[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct PlaceKind(pub ComponentKind);
-
-/// The active board layer for newly-placed components. Set by the
-/// toolbar's layer selector. Spawned components carry the matching
-/// [`OnLayer`] which replicates to peers via schema-sync.
-#[derive(Resource, Clone, Copy, Debug)]
-pub struct PlaceLayer(pub CircuitLayer);
-
-impl Default for PlaceLayer {
-    fn default() -> Self {
-        Self(CircuitLayer::Signal)
-    }
-}
 
 #[derive(Clone, Debug, Event, Message, Serialize, Deserialize)]
 #[serde(tag = "op", content = "args")]
@@ -76,7 +65,6 @@ impl Plugin for PlaceToolPlugin {
         app.add_message::<PlaceCommand>();
         app.add_message::<PlaceEvent>();
         app.init_resource::<PlaceKind>();
-        app.init_resource::<PlaceLayer>();
         app.add_systems(
             Update,
             (
@@ -98,15 +86,25 @@ fn handle_place_commands(
     // `SpawnAt` (no cursor needed) keeps working in those contexts.
     ray_map: Option<Res<RayMap>>,
     cameras: Query<Entity, With<MainCamera>>,
+    grid_manager: Option<Res<crate::GridManager>>,
 ) {
     for cmd in reader.read() {
+        let grid_layout = grid_manager.as_deref().map(|g| *g.layout(match cmd {
+            PlaceCommand::SpawnAt { layer, .. } | PlaceCommand::SpawnAtCursor { layer, .. } => *layer,
+        }));
         match cmd {
             PlaceCommand::SpawnAt {
                 position,
                 kind,
                 layer,
             } => {
-                let entity = spawn_component(&mut commands, *position, *kind, *layer);
+                let entity = spawn_component_with_grid(
+                    &mut commands,
+                    *position,
+                    *kind,
+                    *layer,
+                    grid_layout.as_ref(),
+                );
                 place_events.write(PlaceEvent::ComponentSpawned {
                     entity: entity.to_bits(),
                     kind: *kind,
@@ -128,7 +126,13 @@ fn handle_place_commands(
                     });
                     continue;
                 };
-                let entity = spawn_component(&mut commands, world.into(), *kind, *layer);
+                let entity = spawn_component_with_grid(
+                    &mut commands,
+                    world.into(),
+                    *kind,
+                    *layer,
+                    grid_layout.as_ref(),
+                );
                 place_events.write(PlaceEvent::ComponentSpawned {
                     entity: entity.to_bits(),
                     kind: *kind,
@@ -162,10 +166,29 @@ pub fn spawn_component(
     kind: ComponentKind,
     layer: CircuitLayer,
 ) -> Entity {
+    spawn_component_with_grid(commands, position, kind, layer, None)
+}
+
+/// Same as [`spawn_component`] but with an optional grid layout used
+/// to snap the spawn position to a cell centre on the target layer's
+/// xz-plane. The default-grid path (`grid = None`) preserves the
+/// existing behaviour for programmatic / agent callers that don't
+/// hold the [`GridManager`] resource handle.
+pub fn spawn_component_with_grid(
+    commands: &mut Commands,
+    position: Pos3,
+    kind: ComponentKind,
+    layer: CircuitLayer,
+    grid: Option<&crate::GridLayout3d>,
+) -> Entity {
     // Snap y to the layer's offset regardless of the supplied
     // position.y — the cursor raycast already does this for click
     // spawns; programmatic SpawnAt callers don't have to bother.
-    let world = Vec3::new(position.x, layer.y_offset(), position.z);
+    let raw_world = Vec3::new(position.x, layer.y_offset(), position.z);
+    let world = match grid {
+        Some(layout) => layout.snap(raw_world),
+        None => raw_world,
+    };
     let mut e = commands.spawn((
         CircuitNode,
         Transform::from_translation(world),
@@ -227,7 +250,7 @@ fn handle_canvas_clicks(
     mouse: Option<Res<ButtonInput<MouseButton>>>,
     interactions: Query<&Interaction>,
     place_kind: Res<PlaceKind>,
-    place_layer: Res<PlaceLayer>,
+    layer_manager: Res<crate::LayerManager>,
     mut commands_w: MessageWriter<AppCommand>,
 ) {
     let Some(mouse) = mouse else {
@@ -245,7 +268,7 @@ fn handle_canvas_clicks(
     commands_w.write(AppCommand::Tool(ToolCommand::Place(
         PlaceCommand::SpawnAtCursor {
             kind: place_kind.0,
-            layer: place_layer.0,
+            layer: layer_manager.active(),
         },
     )));
 }

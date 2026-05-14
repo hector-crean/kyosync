@@ -24,12 +24,12 @@ use bevy::math::primitives::{
 };
 use bevy::prelude::*;
 use kyoso_circuit::{
-    Capacitor, CircuitEdge, CircuitEdgeKind, CircuitLayer, CircuitNode, DifferentialPairMarker,
-    Ground, Inductor, OnLayer, Resistor, SameNetMarker, VoltageSource, WireMarker,
-    kind_of_entity,
+    Capacitor, CircuitEdge, CircuitEdgeKind, CircuitNode, DifferentialPairMarker, Ground,
+    Inductor, OnLayer, Resistor, SameNetMarker, VoltageSource, WireMarker, kind_of_entity,
 };
 use kyoso_drag::three_d::Draggable3d;
 use kyoso_graph::components::{EdgeFrom, EdgeTo};
+use kyoso_polyline::prelude::{Polyline, PolylineHandle, PolylineMaterial, PolylineMaterialHandle};
 
 use crate::msg::{AppEvent, ExternalId, GraphMessageExt};
 
@@ -220,58 +220,150 @@ pub fn sync_layer_y(
 }
 
 // ---------------------------------------------------------------------------
-// Edge visuals (3D)
+// Edge visuals (3D, retained-mode polylines)
+//
+// Each circuit edge entity owns a `Polyline` asset whose two-vertex
+// vertex list is rewritten whenever the endpoint nodes move. One
+// `PolylineMaterial` per [`CircuitEdgeKind`] — width and colour come
+// from the material so signal-type reads at a glance and stays correct
+// when zoomed out (gizmos can't do thickness).
 // ---------------------------------------------------------------------------
 
-pub fn on_circuit_edge_added(trigger: On<Add, CircuitEdge>, mut commands: Commands) {
-    commands.entity(trigger.entity).insert(Transform::default());
-}
+/// Per-kind material handles for circuit edges. Created at startup
+/// from [`CircuitEdgeKind::color_srgb`] so all wire edges share one
+/// material, all same-net edges share another, etc. — keeping GPU
+/// material binds down.
+#[derive(Resource)]
+pub struct CircuitEdgeMaterials(pub HashMap<CircuitEdgeKind, Handle<PolylineMaterial>>);
 
-/// Per-frame: draw every circuit edge as a 3D gizmo line from source
-/// component to target component, coloured by [`CircuitEdgeKind`].
-/// Bevy's `Gizmos::line` renders as a 3D line segment under any active
-/// 3D camera.
-pub fn draw_edges_with_gizmos(
-    mut gizmos: Gizmos,
-    edges: Query<(Entity, &EdgeFrom, &EdgeTo), With<CircuitEdge>>,
-    wires: Query<(), With<WireMarker>>,
-    same_net: Query<(), With<SameNetMarker>>,
-    diff_pair: Query<(), With<DifferentialPairMarker>>,
-    transforms: Query<&Transform, With<CircuitNode>>,
-) {
-    for (entity, from, to) in edges.iter() {
-        let (Ok(from_t), Ok(to_t)) = (transforms.get(from.0), transforms.get(to.0)) else {
-            continue;
-        };
-        let kind = kind_of_entity(entity, &wires, &same_net, &diff_pair)
-            .unwrap_or(CircuitEdgeKind::Wire);
-        let c = kind.color_srgb();
-        gizmos.line(
-            from_t.translation,
-            to_t.translation,
-            Color::srgb(c[0], c[1], c[2]),
-        );
+impl FromWorld for CircuitEdgeMaterials {
+    fn from_world(world: &mut World) -> Self {
+        let mut materials = world.resource_mut::<Assets<PolylineMaterial>>();
+        let mut by_kind = HashMap::new();
+        for kind in [
+            CircuitEdgeKind::Wire,
+            CircuitEdgeKind::SameNet,
+            CircuitEdgeKind::DifferentialPair,
+        ] {
+            let c = kind.color_srgb();
+            let mat = materials.add(PolylineMaterial {
+                width: 6.0,
+                color: Color::srgb(c[0], c[1], c[2]).to_linear(),
+                perspective: false,
+                ..default()
+            });
+            by_kind.insert(kind, mat);
+        }
+        Self(by_kind)
     }
 }
 
-/// Draw the layer planes as faint grids so the user can see which layer
-/// they're working on. Lives in `VisualPlugin` since it uses gizmos.
-pub fn draw_layer_planes(mut gizmos: Gizmos) {
-    const HALF_SIZE: f32 = 8.0;
-    const GRID_DIVS: u32 = 16;
-    for layer in CircuitLayer::all() {
-        let y = layer.y_offset();
-        let c = layer.color_srgb();
-        let color = Color::srgba(c[0], c[1], c[2], 0.25);
-        gizmos.grid(
-            Isometry3d::new(
-                Vec3::new(0.0, y, 0.0),
-                Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-            ),
-            UVec2::splat(GRID_DIVS),
-            Vec2::splat(HALF_SIZE * 2.0 / GRID_DIVS as f32),
-            color,
-        );
+impl CircuitEdgeMaterials {
+    fn handle_for(&self, kind: CircuitEdgeKind) -> Handle<PolylineMaterial> {
+        // SAFETY: from_world inserted every variant.
+        self.0.get(&kind).cloned().expect("material per CircuitEdgeKind")
+    }
+}
+
+/// On-add observer for circuit edges: attach a Transform (so layer-y
+/// snapping has somewhere to live even though edges don't carry
+/// `OnLayer` themselves) plus an empty [`Polyline`] asset and the
+/// matching [`PolylineMaterial`] handle for the edge's current kind.
+///
+/// The polyline starts empty — vertices get filled by
+/// [`update_polyline_endpoints`] on the next frame once both endpoint
+/// transforms are queryable. If the kind marker arrives later than the
+/// edge entity itself (the typical inbound-CRDT ordering),
+/// [`sync_edge_material`] swaps in the correct material when the
+/// marker shows up.
+pub fn on_circuit_edge_added(
+    trigger: On<Add, CircuitEdge>,
+    mut commands: Commands,
+    polylines: Option<ResMut<Assets<Polyline>>>,
+    materials: Option<Res<CircuitEdgeMaterials>>,
+    wires: Query<(), With<WireMarker>>,
+    same_net: Query<(), With<SameNetMarker>>,
+    diff_pair: Query<(), With<DifferentialPairMarker>>,
+) {
+    let entity = trigger.entity;
+    commands.entity(entity).insert(Transform::default());
+    let (Some(mut polylines), Some(materials)) = (polylines, materials) else {
+        // Headless / non-visual mode — skip rendering setup.
+        return;
+    };
+    let kind = kind_of_entity(entity, &wires, &same_net, &diff_pair)
+        .unwrap_or(CircuitEdgeKind::Wire);
+    let polyline = polylines.add(Polyline {
+        vertices: Vec::new(),
+        colors: None,
+    });
+    commands.entity(entity).insert((
+        PolylineHandle(polyline),
+        PolylineMaterialHandle(materials.handle_for(kind)),
+    ));
+}
+
+/// Reassign the [`PolylineMaterialHandle`] when a kind marker is added
+/// to an existing edge. The inbound CRDT path can deliver the structural
+/// `AddRefEdge` op before the marker-bearing category projection (which
+/// queues an `ApplyEdgeCategory` deferred command), so the edge's
+/// initial material may be the default `Wire`. Once the real marker
+/// arrives this system swaps in the right one.
+pub fn sync_edge_material(
+    changed: Query<
+        Entity,
+        (
+            With<CircuitEdge>,
+            Or<(
+                Added<WireMarker>,
+                Added<SameNetMarker>,
+                Added<DifferentialPairMarker>,
+            )>,
+        ),
+    >,
+    materials: Option<Res<CircuitEdgeMaterials>>,
+    wires: Query<(), With<WireMarker>>,
+    same_net: Query<(), With<SameNetMarker>>,
+    diff_pair: Query<(), With<DifferentialPairMarker>>,
+    mut commands: Commands,
+) {
+    let Some(materials) = materials else { return };
+    for entity in changed.iter() {
+        let kind = kind_of_entity(entity, &wires, &same_net, &diff_pair)
+            .unwrap_or(CircuitEdgeKind::Wire);
+        commands
+            .entity(entity)
+            .insert(PolylineMaterialHandle(materials.handle_for(kind)));
+    }
+}
+
+/// Per-frame: rewrite each edge's polyline vertices to match its
+/// endpoint node transforms. Skips edges whose endpoints haven't been
+/// projected yet (`transforms.get(...)` errors) and skips writes that
+/// wouldn't change the vertex list — the latter avoids marking the
+/// `Polyline` asset dirty (and re-extracting on the render world)
+/// every frame for static edges.
+pub fn update_polyline_endpoints(
+    edges: Query<(&EdgeFrom, &EdgeTo, &PolylineHandle), With<CircuitEdge>>,
+    transforms: Query<&Transform, With<CircuitNode>>,
+    mut polylines: ResMut<Assets<Polyline>>,
+) {
+    for (from, to, poly_h) in edges.iter() {
+        let (Ok(from_t), Ok(to_t)) = (transforms.get(from.0), transforms.get(to.0)) else {
+            continue;
+        };
+        let Some(mut polyline) = polylines.get_mut(&poly_h.0) else {
+            continue;
+        };
+        let new = [from_t.translation, to_t.translation];
+        if polyline.vertices.len() == 2
+            && polyline.vertices[0] == new[0]
+            && polyline.vertices[1] == new[1]
+        {
+            continue;
+        }
+        polyline.vertices.clear();
+        polyline.vertices.extend_from_slice(&new);
     }
 }
 

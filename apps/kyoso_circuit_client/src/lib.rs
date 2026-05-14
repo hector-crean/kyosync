@@ -43,14 +43,19 @@ use kyoso_circuit::{
 };
 use kyoso_drag::three_d::DragTransform3dPlugin;
 use kyoso_graph_sync::SyncedEdgeCategoryPlugin;
+use kyoso_polyline::PolylinePlugin;
 
+pub mod grid_manager;
 pub mod handlers;
+pub mod layer_manager;
 pub mod msg;
 pub mod presence;
 pub mod scene;
 pub mod tool;
 pub mod ui;
 
+pub use grid_manager::{GridLayout3d, GridManager, GridManagerPlugin};
+pub use layer_manager::{LayerManager, LayerManagerPlugin};
 pub use msg::{AppCommand, AppEvent, DuplexPlugin, GLOBAL, create_duplex_plugin};
 pub use tool::{Tool, ToolsPlugin};
 pub use ui::UiPlugin;
@@ -80,6 +85,8 @@ impl Plugin for AppPlugin {
             SyncedEdgeCategoryPlugin::<CircuitNode, CircuitEdge, SameNetMarker>::default(),
             SyncedEdgeCategoryPlugin::<CircuitNode, CircuitEdge, DifferentialPairMarker>::default(),
             ToolsPlugin,
+            LayerManagerPlugin,
+            GridManagerPlugin,
             presence::PresencePlugin,
         ));
 
@@ -121,6 +128,8 @@ impl Plugin for VisualPlugin {
             DefaultCameraSettings::default(),
         ));
         app.add_plugins(UiPlugin);
+        app.add_plugins(PolylinePlugin);
+        app.init_resource::<scene::CircuitEdgeMaterials>();
         app.add_systems(Startup, (setup_camera, setup_lighting));
         app.add_observer(scene::on_circuit_node_added);
         app.add_observer(scene::on_circuit_edge_added);
@@ -128,8 +137,10 @@ impl Plugin for VisualPlugin {
             Update,
             (
                 scene::sync_component_visuals,
-                scene::draw_edges_with_gizmos,
-                scene::draw_layer_planes,
+                scene::sync_edge_material,
+                scene::update_polyline_endpoints,
+                grid_manager::draw_grid_planes,
+                grid_manager::draw_snap_preview,
                 tool::connect::update_ghost_line,
                 tool::select::draw_selection_outline,
             ),

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumProperty, IntoEnumIterator};
 
 pub use connect::{ConnectCommand, ConnectEvent, ConnectKind, ConnectState, ConnectToolPlugin};
-pub use place::{PlaceCommand, PlaceEvent, PlaceKind, PlaceLayer, PlaceToolPlugin};
+pub use place::{PlaceCommand, PlaceEvent, PlaceKind, PlaceToolPlugin};
 pub use select::{SelectCommand, SelectEvent, SelectToolPlugin};
 
 /// Top-level interaction mode. Exactly one is active at a time.

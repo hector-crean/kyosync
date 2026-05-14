@@ -16,6 +16,7 @@ kyoso_graph_sync = { workspace = true }
 kyoso_circuit    = { workspace = true }
 kyoso_drag       = { workspace = true }
 kyoso_camera     = { workspace = true }
+kyoso_polyline   = { workspace = true }
 
 bevy              = { workspace = true, features = ["default"] }
 crossbeam-channel = { workspace = true }

@@ -11,7 +11,8 @@ use bevy::prelude::*;
 use kyoso_circuit::{CircuitEdgeKind, CircuitLayer, ComponentKind};
 
 use crate::msg::AppCommand;
-use crate::tool::{ConnectKind, PlaceKind, PlaceLayer, Tool};
+use crate::tool::{ConnectKind, PlaceKind, Tool};
+use crate::LayerManager;
 
 // --- Design tokens --------------------------------------------------------
 
@@ -382,11 +383,11 @@ fn handle_layer_clicks(
 }
 
 fn sync_layer_visuals(
-    place_layer: Res<PlaceLayer>,
+    layer_manager: Res<LayerManager>,
     mut buttons: Query<(&Interaction, &LayerButton, &mut BackgroundColor)>,
 ) {
     for (interaction, button, mut bg) in &mut buttons {
-        let is_active = button.0 == place_layer.0;
+        let is_active = button.0 == layer_manager.active();
         *bg = match (is_active, interaction) {
             (true, _) => BUTTON_ACTIVE.into(),
             (false, Interaction::Hovered | Interaction::Pressed) => BUTTON_HOVER.into(),

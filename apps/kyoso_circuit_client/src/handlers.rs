@@ -11,9 +11,10 @@ use kyoso_graph_sync::{ClientSyncEngine, EdgeCategoryMarker};
 
 use crate::msg::{AppCommand, AppEvent, ExternalId, GraphCommandExt, SyncCommand, SyncEvent};
 use crate::tool::{
-    ConnectCommand, ConnectKind, PlaceCommand, PlaceKind, PlaceLayer, SelectCommand, Tool,
-    ToolCommand, ToolEvent,
+    ConnectCommand, ConnectKind, PlaceCommand, PlaceKind, SelectCommand, Tool, ToolCommand,
+    ToolEvent,
 };
+use crate::LayerManager;
 
 type SyncedIndex = kyoso_graph_sync::EntityCrdtIndex;
 
@@ -23,7 +24,7 @@ pub fn dispatch_app_commands(
     mut next_tool: ResMut<NextState<Tool>>,
     mut connect_kind: ResMut<ConnectKind>,
     mut place_kind: ResMut<PlaceKind>,
-    mut place_layer: ResMut<PlaceLayer>,
+    mut layer_manager: ResMut<LayerManager>,
     mut select_w: MessageWriter<SelectCommand>,
     mut place_w: MessageWriter<PlaceCommand>,
     mut connect_w: MessageWriter<ConnectCommand>,
@@ -45,7 +46,7 @@ pub fn dispatch_app_commands(
             }
 
             AppCommand::SetActiveLayer(layer) => {
-                place_layer.0 = *layer;
+                layer_manager.set_active(*layer);
             }
 
             AppCommand::Tool(ToolCommand::Select(c)) => {
@@ -63,6 +64,10 @@ pub fn dispatch_app_commands(
                 kind,
                 layer,
             }) => {
+                // No snap on the agent / FFI path — programmatic
+                // callers usually know the exact world coords they
+                // want. Add a `snap: bool` arg to the command shape
+                // if a snapping intent path is needed later.
                 crate::tool::place::spawn_component(&mut commands, *position, *kind, *layer);
             }
             AppCommand::Graph(GraphCommandExt::Connect { from, to, kind }) => {
