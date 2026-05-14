@@ -29,7 +29,7 @@ use crate::context::SubDot;
 /// - `["name"]` — a top-level scalar property.
 /// - `["style", "fill"]` — a nested map field.
 /// - `["extras", "user-defined-key"]` — a dynamic-map escape hatch.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Path(pub Vec<PathSegment>);
 
 impl Path {
@@ -76,7 +76,7 @@ impl Path {
 /// `Field` and `Key` are distinct on the wire — the schema layer
 /// (Phase G) uses the variant to enforce that static fields are not
 /// confused with dynamic map keys, even though both carry strings.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum PathSegment {
     /// Statically-known field name on a schema struct.
     Field(String),

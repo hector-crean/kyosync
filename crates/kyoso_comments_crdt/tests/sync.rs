@@ -228,10 +228,11 @@ fn cross_model_anchor_uses_graph_id() {
     // minted by `kyoso_graph_crdt`. The comments backend doesn't
     // validate; the shared `IdGen` is what guarantees the reference
     // is unambiguous.
-    use kyoso_graph_crdt::CrdtBackend;
+    use kyoso_crdt::EmptySchema;
+    use kyoso_graph_crdt::GraphBackend;
 
     let ids = IdGen::new(5);
-    let mut graph = CrdtBackend::<(), ()>::with_shared_ids(ids.clone());
+    let mut graph = GraphBackend::<EmptySchema>::with_shared_ids(ids.clone());
     let mut comments = CommentsBackend::with_shared_ids(ids.clone());
 
     let node_id = graph.add_node();

@@ -1,14 +1,14 @@
 //! Graph model server-side handler.
 //!
 //! Owns the graph [`OpStore`] (postgres or in-memory), the server-side
-//! mirror ([`GraphBackend<EmptySchema>`]), the append-lock, and the
+//! mirror ([`GraphBackend<OpaqueSchemaState>`]), the append-lock, and the
 //! snapshot/compaction logic that used to live in [`crate::services::Room`]
 //! before the per-model-handler refactor.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use kyoso_crdt::{CrdtModel, EmptySchema, GlobalSeq, ModelId, PeerId, RoomId};
+use kyoso_crdt::{CrdtModel, GlobalSeq, ModelId, PeerId, RoomId};
 use kyoso_graph_crdt::{GraphBackend, graph_model};
 use tokio::sync::Mutex;
 
@@ -17,7 +17,7 @@ use crate::services::handler::{HandlerFactory, RoomModelHandler};
 use crate::services::store::OpStore;
 use crate::Result;
 
-type ServerMirror = GraphBackend<EmptySchema>;
+type ServerMirror = GraphBackend<kyoso_crdt::OpaqueSchemaState>;
 type GraphOp = kyoso_crdt::Op<<ServerMirror as CrdtModel>::OpKind>;
 type GraphDiff = kyoso_crdt::Diff<<ServerMirror as CrdtModel>::OpKind>;
 type GraphState = <ServerMirror as CrdtModel>::State;

@@ -19,7 +19,7 @@ use std::marker::PhantomData;
 
 use crate::context::{CausalContext, CausalState};
 use crate::id::{CrdtId, GlobalSeq, IdGen, PeerId};
-use crate::lattice::Crdt;
+use crate::lattice::{Crdt, DeltaError};
 use crate::model::{ApplyError, CrdtModel};
 use crate::op::Op;
 use crate::schema::{IntoWireOp, SchemaApply};
@@ -332,6 +332,24 @@ where
         Ok(())
     }
 
+    /// Apply only the property portion of an op directly to the schema,
+    /// bypassing `GlobalSeq` validation.
+    ///
+    /// Used by per-schema secondary stores (e.g. typed-schema sync
+    /// plugins that mirror property ops already applied to a primary
+    /// backend). Structural ops are silently ignored.
+    pub fn apply_property_op(&mut self, op: &Op<T::OpKind>) -> Result<(), DeltaError> {
+        let Some(prop_op) = T::extract_property_op(&op.kind) else {
+            return Ok(());
+        };
+        let ctx = CausalContext::new(op.id, op.seq, &mut self.causal);
+        let schema = self
+            .schemas
+            .entry(prop_op.target)
+            .or_insert_with(S::default);
+        schema.apply_wire(&prop_op.path, prop_op.delta, &ctx)
+    }
+
     /// Snapshot the backend's current state.
     ///
     /// Returns a compacted representation of:
@@ -344,7 +362,10 @@ where
         Snapshot {
             at_seq: self.applied_seq,
             topology: self.topology.snapshot(),
-            schemas: self.schemas.clone(),
+            // HashMap → BTreeMap so the encoded snapshot bytes are
+            // deterministic across calls (HashMap iteration order
+            // varies per process).
+            schemas: self.schemas.iter().map(|(k, v)| (*k, v.clone())).collect(),
         }
     }
 
@@ -356,7 +377,7 @@ where
     pub fn restore(&mut self, snap: Snapshot<T, S>) {
         self.applied_seq = snap.at_seq;
         self.topology.restore(snap.topology);
-        self.schemas = snap.schemas;
+        self.schemas = snap.schemas.into_iter().collect();
 
         // Bump IdGen past any IDs in the snapshot that belong to this peer
         let my_peer = self.ids.peer();
@@ -390,8 +411,12 @@ where
     pub at_seq: GlobalSeq,
     /// Structural topology state (tree, edges, z-order, etc.)
     pub topology: T::SnapshotState,
-    /// Per-entity property schemas (only live entities)
-    pub schemas: HashMap<CrdtId, S>,
+    /// Per-entity property schemas (only live entities). `BTreeMap`
+    /// rather than `HashMap` so postcard encoding is deterministic —
+    /// two snapshots over equal state encode to identical bytes,
+    /// which is what enables snapshot equality by hash (e.g. for the
+    /// agent harness's encode/decode round-trip proptest).
+    pub schemas: std::collections::BTreeMap<CrdtId, S>,
 }
 
 // Manual Clone impl to avoid requiring T: Clone (we only need T::SnapshotState: Clone)
@@ -406,6 +431,20 @@ where
             topology: self.topology.clone(),
             schemas: self.schemas.clone(),
         }
+    }
+}
+
+// Manual PartialEq for chaos-sim convergence comparisons.
+impl<T, S> PartialEq for Snapshot<T, S>
+where
+    T: Topology,
+    T::SnapshotState: PartialEq,
+    S: Crdt + SchemaApply + Default + PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.at_seq == other.at_seq
+            && self.topology == other.topology
+            && self.schemas == other.schemas
     }
 }
 
@@ -485,7 +524,7 @@ where
 pub struct EmptySchema;
 
 // Manual trait impls for EmptySchema (derive macro would generate nothing)
-use crate::lattice::{Crdt as CrdtTrait, DeltaError, Lattice};
+use crate::lattice::{Crdt as CrdtTrait, Lattice};
 
 impl Lattice for EmptySchema {
     fn bottom() -> Self {
@@ -527,6 +566,15 @@ impl SchemaApply for EmptySchema {
         _ctx: &CausalContext,
     ) -> Result<(), DeltaError> {
         // No fields to apply to
+        Ok(())
+    }
+
+    fn install_state(
+        &mut self,
+        _path: &crate::delta::Path,
+        _field: crate::opaque::OpaqueField,
+    ) -> Result<(), DeltaError> {
+        // No fields to install
         Ok(())
     }
 }

@@ -17,6 +17,7 @@
 use crate::context::CausalContext;
 use crate::delta::{Path, PathSegment, WireDelta};
 use crate::lattice::DeltaError;
+use crate::opaque::OpaqueField;
 
 /// Convert a typed schema [`Delta`](crate::Crdt::Delta) to the wire
 /// shape the transport actually carries: a [`Path`] addressing the
@@ -47,6 +48,19 @@ pub trait SchemaApply {
         path: &Path,
         delta: WireDelta,
         ctx: &CausalContext,
+    ) -> Result<(), DeltaError>;
+
+    /// Install fully-merged opaque state at the position addressed by
+    /// `path`. Called during snapshot hydration on the client; bypasses
+    /// the delta dispatch since `field` already represents post-merge
+    /// state from the server.
+    ///
+    /// Returns [`DeltaError::TypeMismatch`] if the `OpaqueField` variant
+    /// doesn't match the primitive CRDT at this path.
+    fn install_state(
+        &mut self,
+        path: &Path,
+        field: OpaqueField,
     ) -> Result<(), DeltaError>;
 }
 

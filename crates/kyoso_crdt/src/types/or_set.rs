@@ -9,7 +9,7 @@
 //! op's [`CrdtId`](crate::CrdtId) (sub = 0). Multi-delta-per-op would
 //! require sub-dot allocation; current design is one delta per op.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::Hash;
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -17,13 +17,14 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use crate::context::{CausalContext, SubDot};
 use crate::delta::{Path, WireDelta};
 use crate::lattice::{Crdt, DeltaError, Lattice};
+use crate::opaque::OpaqueField;
 use crate::schema::{IntoWireOp, SchemaApply};
 
 /// Add-wins set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrSet<T: Eq + Hash + Ord> {
     /// element → set of dots that added it.
-    adds: HashMap<T, BTreeSet<SubDot>>,
+    adds: BTreeMap<T, BTreeSet<SubDot>>,
     /// observed-and-removed dots (tombstones at the dot level).
     removes: BTreeSet<SubDot>,
 }
@@ -32,7 +33,7 @@ impl<T: Eq + Hash + Ord> OrSet<T> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            adds: HashMap::new(),
+            adds: BTreeMap::new(),
             removes: BTreeSet::new(),
         }
     }
@@ -180,6 +181,34 @@ where
         }
         let typed: OrSetDelta<T> = delta.try_into()?;
         self.apply(&typed, ctx)
+    }
+
+    fn install_state(&mut self, path: &Path, field: OpaqueField) -> Result<(), DeltaError> {
+        if !path.is_empty() {
+            return Err(DeltaError::Invalid {
+                reason: format!(
+                    "OrSet leaf got non-empty path tail in install_state: {} segments",
+                    path.len()
+                ),
+            });
+        }
+        let OpaqueField::OrSet(byte_set) = field else {
+            return Err(DeltaError::TypeMismatch {
+                reason: "expected OpaqueField::OrSet for OrSet".to_string(),
+            });
+        };
+        // Decode the opaque byte items back to T. Each entry's tags
+        // carry over unchanged; only the keys (values) need decoding.
+        let mut adds: BTreeMap<T, BTreeSet<SubDot>> = BTreeMap::new();
+        for (bytes, tags) in byte_set.adds {
+            let value: T = postcard::from_bytes(&bytes).map_err(|e| DeltaError::Invalid {
+                reason: format!("OrSet install_state decode: {e}"),
+            })?;
+            adds.insert(value, tags);
+        }
+        self.adds = adds;
+        self.removes = byte_set.removes;
+        Ok(())
     }
 }
 

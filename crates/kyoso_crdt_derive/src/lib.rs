@@ -157,6 +157,34 @@ pub fn derive_crdt(input: TokenStream) -> TokenStream {
                     ),
                 }
             }
+
+            fn install_state(
+                &mut self,
+                path: &::kyoso_crdt::Path,
+                field: ::kyoso_crdt::OpaqueField,
+            ) -> ::core::result::Result<(), ::kyoso_crdt::DeltaError> {
+                // Same dispatch shape as `apply_wire`: walk the head
+                // segment to the matching field and recurse. Leaf
+                // primitives consume the empty tail; nested schemas /
+                // maps walk further.
+                let (head, tail) = ::kyoso_crdt::schema::split_field_head(path)?;
+                match head {
+                    #(
+                        #field_strs => {
+                            ::kyoso_crdt::SchemaApply::install_state(
+                                &mut self.#field_idents,
+                                &tail,
+                                field,
+                            )
+                        }
+                    )*
+                    other => ::core::result::Result::Err(
+                        ::kyoso_crdt::DeltaError::UnknownPath {
+                            segment: other.to_string(),
+                        },
+                    ),
+                }
+            }
         }
 
         impl ::kyoso_crdt::IntoWireOp for #delta_name {

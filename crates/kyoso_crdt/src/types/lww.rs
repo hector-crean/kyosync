@@ -16,6 +16,7 @@ use crate::context::CausalContext;
 use crate::delta::{Path, WireDelta};
 use crate::id::{GlobalSeq, PeerId};
 use crate::lattice::{Crdt, DeltaError, Lattice};
+use crate::opaque::OpaqueField;
 use crate::schema::{IntoWireOp, SchemaApply};
 
 /// Internal LWW stamp. Total ordering is `(seq, peer)` lexicographic;
@@ -166,6 +167,34 @@ where
         }
         let typed: LwwDelta<T> = delta.try_into()?;
         self.apply(&typed, ctx)
+    }
+
+    fn install_state(&mut self, path: &Path, field: OpaqueField) -> Result<(), DeltaError> {
+        if !path.is_empty() {
+            return Err(DeltaError::Invalid {
+                reason: format!(
+                    "LwwRegister leaf got non-empty path tail in install_state: {} segments",
+                    path.len()
+                ),
+            });
+        }
+        let OpaqueField::Lww(byte_reg) = field else {
+            return Err(DeltaError::TypeMismatch {
+                reason: "expected OpaqueField::Lww for LwwRegister".to_string(),
+            });
+        };
+        // Decode the opaque bytes back to T using the same postcard
+        // encoding the wire op used on the way in.
+        self.inner = match byte_reg.inner {
+            None => None,
+            Some((stamp, bytes)) => {
+                let value: T = postcard::from_bytes(&bytes).map_err(|e| DeltaError::Invalid {
+                    reason: format!("LwwRegister install_state decode: {e}"),
+                })?;
+                Some((stamp, value))
+            }
+        };
+        Ok(())
     }
 }
 

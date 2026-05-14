@@ -6,7 +6,7 @@
 //! op exactly once in `GlobalSeq` order); the `Lattice::join` view is
 //! pointwise max, naturally idempotent.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,12 +14,13 @@ use crate::context::CausalContext;
 use crate::delta::{Path, WireDelta};
 use crate::id::PeerId;
 use crate::lattice::{Crdt, DeltaError, Lattice};
+use crate::opaque::OpaqueField;
 use crate::schema::{IntoWireOp, SchemaApply};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PnCounter {
-    pos: HashMap<PeerId, u64>,
-    neg: HashMap<PeerId, u64>,
+    pos: BTreeMap<PeerId, u64>,
+    neg: BTreeMap<PeerId, u64>,
 }
 
 impl PnCounter {
@@ -124,6 +125,26 @@ impl SchemaApply for PnCounter {
         }
         let typed: PnDelta = delta.try_into()?;
         self.apply(&typed, ctx)
+    }
+
+    fn install_state(&mut self, path: &Path, field: OpaqueField) -> Result<(), DeltaError> {
+        if !path.is_empty() {
+            return Err(DeltaError::Invalid {
+                reason: format!(
+                    "PnCounter leaf got non-empty path tail in install_state: {} segments",
+                    path.len()
+                ),
+            });
+        }
+        let OpaqueField::PnCounter(byte_counter) = field else {
+            return Err(DeltaError::TypeMismatch {
+                reason: "expected OpaqueField::PnCounter for PnCounter".to_string(),
+            });
+        };
+        // PnCounter has no `T` parameter — install is a direct field copy.
+        self.pos = byte_counter.pos;
+        self.neg = byte_counter.neg;
+        Ok(())
     }
 }
 

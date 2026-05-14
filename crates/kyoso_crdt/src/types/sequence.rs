@@ -25,13 +25,14 @@
 //! cosmetic, not divergent — both peers still reach the same final
 //! state.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::context::{CausalContext, SubDot};
 use crate::delta::{Path, WireDelta};
 use crate::lattice::{Crdt, DeltaError, Lattice};
+use crate::opaque::OpaqueField;
 use crate::schema::{IntoWireOp, SchemaApply};
 
 /// Per-element bookkeeping.
@@ -45,14 +46,14 @@ struct Element<T> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sequence<T> {
     /// All elements ever inserted, indexed by id. Tombstones included.
-    elements: HashMap<SubDot, Element<T>>,
+    elements: BTreeMap<SubDot, Element<T>>,
 }
 
 impl<T> Sequence<T> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            elements: HashMap::new(),
+            elements: BTreeMap::new(),
         }
     }
 
@@ -313,6 +314,43 @@ where
         }
         let typed: SequenceDelta<T> = delta.try_into()?;
         self.apply(&typed, ctx)
+    }
+
+    fn install_state(&mut self, path: &Path, field: OpaqueField) -> Result<(), DeltaError> {
+        if !path.is_empty() {
+            return Err(DeltaError::Invalid {
+                reason: format!(
+                    "Sequence leaf got non-empty path tail in install_state: {} segments",
+                    path.len()
+                ),
+            });
+        }
+        let OpaqueField::Sequence(byte_seq) = field else {
+            return Err(DeltaError::TypeMismatch {
+                reason: "expected OpaqueField::Sequence for Sequence".to_string(),
+            });
+        };
+        // Decode each element's bytes back to T. Structural metadata
+        // (id, tombstoned, predecessor) carries over unchanged.
+        let mut elements: BTreeMap<SubDot, Element<T>> =
+            BTreeMap::new();
+        for (id, byte_elem) in byte_seq.elements {
+            let value: T = postcard::from_bytes(&byte_elem.value).map_err(|e| {
+                DeltaError::Invalid {
+                    reason: format!("Sequence install_state decode: {e}"),
+                }
+            })?;
+            elements.insert(
+                id,
+                Element {
+                    value,
+                    tombstoned: byte_elem.tombstoned,
+                    predecessor: byte_elem.predecessor,
+                },
+            );
+        }
+        self.elements = elements;
+        Ok(())
     }
 }
 

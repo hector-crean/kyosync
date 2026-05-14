@@ -12,26 +12,27 @@
 //! `Remove` delta already carries an `observed` field for that future
 //! shape, currently unused.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::context::{CausalContext, SubDot};
 use crate::delta::{Path, PathSegment, WireDelta};
 use crate::lattice::{Crdt, DeltaError, Lattice};
+use crate::opaque::OpaqueField;
 use crate::schema::{IntoWireOp, SchemaApply};
 
 /// String-keyed map of CRDT values.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CausalMap<V: Crdt> {
-    values: HashMap<String, V>,
+    values: BTreeMap<String, V>,
 }
 
 impl<V: Crdt> CausalMap<V> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            values: HashMap::new(),
+            values: BTreeMap::new(),
         }
     }
 
@@ -184,6 +185,18 @@ where
         }
         let entry = self.values.entry(key).or_insert_with(V::bottom);
         entry.apply_wire(&tail, delta, ctx)
+    }
+
+    fn install_state(&mut self, path: &Path, field: OpaqueField) -> Result<(), DeltaError> {
+        let (head, tail) = path.split_first().ok_or_else(|| DeltaError::Invalid {
+            reason: "CausalMap install_state requires a path with at least the dynamic key"
+                .to_string(),
+        })?;
+        let key = match head {
+            PathSegment::Field(s) | PathSegment::Key(s) => s.clone(),
+        };
+        let entry = self.values.entry(key).or_insert_with(V::bottom);
+        entry.install_state(&tail, field)
     }
 }
 
