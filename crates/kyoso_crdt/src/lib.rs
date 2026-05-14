@@ -57,7 +57,7 @@ pub use lattice::{Crdt, DeltaError, Lattice};
 pub use log::{InMemoryOpLog, OpLogRead, OpLogWrite};
 pub use model::{ApplyError, CrdtModel};
 pub use op::{Diff, Op};
-pub use opaque::{OpaqueField, OpaqueSchemaState};
+pub use opaque::{OpaqueValue, OpaqueRecord};
 pub use protocol::{ClientMsg, RoomId, ServerMsg};
 pub use schema::{IntoWireOp, SchemaApply};
 pub use topology::{PropertyOp, Topology};

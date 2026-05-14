@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use crate::context::{CausalContext, SubDot};
 use crate::delta::{Path, WireDelta};
 use crate::lattice::{Crdt, DeltaError, Lattice};
-use crate::opaque::OpaqueField;
+use crate::opaque::OpaqueValue;
 use crate::schema::{IntoWireOp, SchemaApply};
 
 /// Add-wins set.
@@ -183,7 +183,7 @@ where
         self.apply(&typed, ctx)
     }
 
-    fn install_state(&mut self, path: &Path, field: OpaqueField) -> Result<(), DeltaError> {
+    fn install_state(&mut self, path: &Path, field: OpaqueValue) -> Result<(), DeltaError> {
         if !path.is_empty() {
             return Err(DeltaError::Invalid {
                 reason: format!(
@@ -192,9 +192,9 @@ where
                 ),
             });
         }
-        let OpaqueField::OrSet(byte_set) = field else {
+        let OpaqueValue::OrSet(byte_set) = field else {
             return Err(DeltaError::TypeMismatch {
-                reason: "expected OpaqueField::OrSet for OrSet".to_string(),
+                reason: "expected OpaqueValue::OrSet for OrSet".to_string(),
             });
         };
         // Decode the opaque byte items back to T. Each entry's tags

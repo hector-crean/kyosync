@@ -39,7 +39,7 @@ use std::ops::{Deref, DerefMut};
 use bevy::ecs::component::Mutable;
 use bevy::prelude::*;
 use kyoso_crdt::{
-    Backend, Crdt, CrdtId, IntoWireOp, Op, OpaqueField, Path, PathSegment, SchemaApply, WireDelta,
+    Backend, Crdt, CrdtId, IntoWireOp, Op, OpaqueValue, Path, PathSegment, SchemaApply, WireDelta,
 };
 use kyoso_graph_crdt::{GraphTopology, OpKind};
 
@@ -235,7 +235,7 @@ impl SchemaTarget for EdgeTarget {
 // SchemaHydrators — registry for snapshot-driven typed-schema installation.
 //
 // When the Welcome handler decodes a server snapshot, each
-// `OpaqueSchemaState` entry needs to be routed into the matching
+// `OpaqueRecord` entry needs to be routed into the matching
 // `SchemaDoc<C::Schema>` Bevy resource. The right `C` is identified by
 // (target kind, schema name); the registry maps that pair to a
 // monomorphized hydrator that knows how to install the opaque state
@@ -245,7 +245,7 @@ impl SchemaTarget for EdgeTarget {
 /// Signature of one hydrator. Takes the world (for resource access),
 /// the entity ID the state belongs to, the schema-relative path inside
 /// the schema struct, and the opaque per-primitive state to install.
-pub type HydratorFn = fn(&mut World, target: CrdtId, path: Path, field: OpaqueField);
+pub type HydratorFn = fn(&mut World, target: CrdtId, path: Path, field: OpaqueValue);
 
 /// Registry of per-(target-kind, schema-name) hydrators.
 ///
@@ -284,7 +284,7 @@ impl SchemaHydrators {
 /// `ensure_schema` is called first because the schema slot may not
 /// exist yet on the receiving replica — the snapshot is authoritative
 /// for "what state exists for which target."
-fn hydrate_schema_doc<C>(world: &mut World, target: CrdtId, path: Path, field: OpaqueField)
+fn hydrate_schema_doc<C>(world: &mut World, target: CrdtId, path: Path, field: OpaqueValue)
 where
     C: SchemaSync,
     <C::Schema as Crdt>::Delta: IntoWireOp,

@@ -21,7 +21,7 @@
 //!
 //! impl Topology for GraphTopology {
 //!     type OpKind = GraphOpKind;
-//!     type SnapshotState = GraphSnapshot;
+//!     type SnapshotState = GraphTopologySnapshot;
 //!
 //!     fn apply_structural_op(&mut self, op: &GraphOpKind, ctx: &CausalContext) {
 //!         match op {

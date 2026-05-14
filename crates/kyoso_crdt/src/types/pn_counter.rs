@@ -14,7 +14,7 @@ use crate::context::CausalContext;
 use crate::delta::{Path, WireDelta};
 use crate::id::PeerId;
 use crate::lattice::{Crdt, DeltaError, Lattice};
-use crate::opaque::OpaqueField;
+use crate::opaque::OpaqueValue;
 use crate::schema::{IntoWireOp, SchemaApply};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,7 +127,7 @@ impl SchemaApply for PnCounter {
         self.apply(&typed, ctx)
     }
 
-    fn install_state(&mut self, path: &Path, field: OpaqueField) -> Result<(), DeltaError> {
+    fn install_state(&mut self, path: &Path, field: OpaqueValue) -> Result<(), DeltaError> {
         if !path.is_empty() {
             return Err(DeltaError::Invalid {
                 reason: format!(
@@ -136,9 +136,9 @@ impl SchemaApply for PnCounter {
                 ),
             });
         }
-        let OpaqueField::PnCounter(byte_counter) = field else {
+        let OpaqueValue::PnCounter(byte_counter) = field else {
             return Err(DeltaError::TypeMismatch {
-                reason: "expected OpaqueField::PnCounter for PnCounter".to_string(),
+                reason: "expected OpaqueValue::PnCounter for PnCounter".to_string(),
             });
         };
         // PnCounter has no `T` parameter — install is a direct field copy.

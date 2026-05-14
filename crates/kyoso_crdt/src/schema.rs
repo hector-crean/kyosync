@@ -17,7 +17,7 @@
 use crate::context::CausalContext;
 use crate::delta::{Path, PathSegment, WireDelta};
 use crate::lattice::DeltaError;
-use crate::opaque::OpaqueField;
+use crate::opaque::OpaqueValue;
 
 /// Convert a typed schema [`Delta`](crate::Crdt::Delta) to the wire
 /// shape the transport actually carries: a [`Path`] addressing the
@@ -55,12 +55,12 @@ pub trait SchemaApply {
     /// the delta dispatch since `field` already represents post-merge
     /// state from the server.
     ///
-    /// Returns [`DeltaError::TypeMismatch`] if the `OpaqueField` variant
+    /// Returns [`DeltaError::TypeMismatch`] if the `OpaqueValue` variant
     /// doesn't match the primitive CRDT at this path.
     fn install_state(
         &mut self,
         path: &Path,
-        field: OpaqueField,
+        field: OpaqueValue,
     ) -> Result<(), DeltaError>;
 }
 

@@ -24,20 +24,20 @@
 //! [`ClientMsg`]: kyoso_crdt::ClientMsg
 //! [`ServerMsg`]: kyoso_crdt::ServerMsg
 
-use kyoso_crdt::{CrdtModel, OpaqueSchemaState};
+use kyoso_crdt::{CrdtModel, OpaqueRecord};
 use kyoso_graph_crdt::GraphBackend;
 
 /// The CRDT model the server uses for all rooms. Change this one line
 /// to retarget the server at a different model.
 ///
-/// Uses [`OpaqueSchemaState`] as the per-entity property schema so the
+/// Uses [`OpaqueRecord`] as the per-entity property schema so the
 /// server holds fully-merged typed-schema state (LWW values, OR-Set
 /// adds + tombstones, PN counts, sequence elements) opaquely — by path,
 /// without knowing the user-side schema types. Snapshots produced by
 /// the server carry this state, so late joiners hydrate per-component
 /// `SchemaDoc<C::Schema>` resources from the snapshot rather than
 /// replaying every property op from sequence 0.
-pub type ServerModel = GraphBackend<OpaqueSchemaState>;
+pub type ServerModel = GraphBackend<OpaqueRecord>;
 
 /// Op type stored in the log + sent on the wire, resolved to the
 /// concrete kind that [`ServerModel`] uses.

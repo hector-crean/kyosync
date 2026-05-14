@@ -1,7 +1,7 @@
 //! Graph model server-side handler.
 //!
 //! Owns the graph [`OpStore`] (postgres or in-memory), the server-side
-//! mirror ([`GraphBackend<OpaqueSchemaState>`]), the append-lock, and the
+//! mirror ([`GraphBackend<OpaqueRecord>`]), the append-lock, and the
 //! snapshot/compaction logic that used to live in [`crate::services::Room`]
 //! before the per-model-handler refactor.
 
@@ -17,7 +17,7 @@ use crate::services::handler::{HandlerFactory, RoomModelHandler};
 use crate::services::store::OpStore;
 use crate::Result;
 
-type ServerMirror = GraphBackend<kyoso_crdt::OpaqueSchemaState>;
+type ServerMirror = GraphBackend<kyoso_crdt::OpaqueRecord>;
 type GraphOp = kyoso_crdt::Op<<ServerMirror as CrdtModel>::OpKind>;
 type GraphDiff = kyoso_crdt::Diff<<ServerMirror as CrdtModel>::OpKind>;
 type GraphState = <ServerMirror as CrdtModel>::State;

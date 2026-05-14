@@ -1,13 +1,13 @@
 //! Opaque, schema-agnostic CRDT state for server snapshots and replay.
 //!
-//! [`OpaqueSchemaState`] is what the server uses as its `Backend<T, S>`
+//! [`OpaqueRecord`] is what the server uses as its `Backend<T, S>`
 //! schema parameter. It holds the fully-merged primitive CRDT state
 //! per entity, keyed by [`Path`], without knowing the concrete user
 //! schema type. Each leaf stores its value as `Vec<u8>` (the original
 //! postcard-encoded payload from the wire op) so the server doesn't
 //! need to know what `T` was inside the client's typed schema.
 //!
-//! The variants of [`OpaqueField`] mirror the primitive CRDT types in
+//! The variants of [`OpaqueValue`] mirror the primitive CRDT types in
 //! [`crate::types`]. Each primitive's existing `Lattice` / `Crdt` impls
 //! handle merging when `T = Vec<u8>` — bytes are kept opaque end-to-end.
 //!
@@ -17,14 +17,14 @@
 //!     wire op (SetNodeProperty)
 //!         │
 //!         ▼
-//!     OpaqueSchemaState::apply_wire(path, delta, ctx)
+//!     OpaqueRecord::apply_wire(path, delta, ctx)
 //!         │
-//!         ├─ resolve / create OpaqueField at path
+//!         ├─ resolve / create OpaqueValue at path
 //!         └─ dispatch on WireDelta variant → primitive's apply
 //!
 //!     snapshot()
 //!         │
-//!         └─ serialize HashMap<Path, OpaqueField> as part of the
+//!         └─ serialize HashMap<Path, OpaqueValue> as part of the
 //!            server's snapshot payload
 //!
 //!     hydrate (client side)
@@ -39,7 +39,7 @@
 //!   `derive(Crdt)` schemas and per-component `SchemaDoc<S>` resources.
 //! - Not a way for the server to mutate typed state. The server only
 //!   receives ops; it never originates them. Hence
-//!   [`OpaqueSchemaState`]'s `Crdt::Mutation` is uninhabited.
+//!   [`OpaqueRecord`]'s `Crdt::Mutation` is uninhabited.
 
 use std::collections::BTreeMap;
 
@@ -54,28 +54,28 @@ use crate::types::{LwwDelta, LwwRegister, OrSet, OrSetDelta, PnCounter, PnDelta,
 /// One primitive CRDT's fully-merged state, holding values as opaque
 /// bytes so the server doesn't need to know the user's `T`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum OpaqueField {
+pub enum OpaqueValue {
     Lww(LwwRegister<Vec<u8>>),
     OrSet(OrSet<Vec<u8>>),
     PnCounter(PnCounter),
     Sequence(Sequence<Vec<u8>>),
 }
 
-impl Lattice for OpaqueField {
+impl Lattice for OpaqueValue {
     fn bottom() -> Self {
         // No meaningful bottom — caller always constructs the correct
         // variant for the incoming wire op. We pick Lww arbitrarily so
         // bottom() is total; a type-mismatched join with this value is
-        // a protocol bug surfaced by `OpaqueField::join`.
-        OpaqueField::Lww(LwwRegister::empty())
+        // a protocol bug surfaced by `OpaqueValue::join`.
+        OpaqueValue::Lww(LwwRegister::empty())
     }
 
     fn join(&mut self, other: Self) {
         match (self, other) {
-            (OpaqueField::Lww(a), OpaqueField::Lww(b)) => a.join(b),
-            (OpaqueField::OrSet(a), OpaqueField::OrSet(b)) => a.join(b),
-            (OpaqueField::PnCounter(a), OpaqueField::PnCounter(b)) => a.join(b),
-            (OpaqueField::Sequence(a), OpaqueField::Sequence(b)) => a.join(b),
+            (OpaqueValue::Lww(a), OpaqueValue::Lww(b)) => a.join(b),
+            (OpaqueValue::OrSet(a), OpaqueValue::OrSet(b)) => a.join(b),
+            (OpaqueValue::PnCounter(a), OpaqueValue::PnCounter(b)) => a.join(b),
+            (OpaqueValue::Sequence(a), OpaqueValue::Sequence(b)) => a.join(b),
             // Variant mismatch — caller is mixing CRDT kinds at the same
             // path. This shouldn't happen with a well-formed schema; we
             // leave `self` untouched rather than panic.
@@ -89,14 +89,14 @@ impl Lattice for OpaqueField {
 /// Keyed by full [`Path`] (which already includes schema-name +
 /// field-name + any map keys). Each entry is one primitive CRDT.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct OpaqueSchemaState {
+pub struct OpaqueRecord {
     /// `BTreeMap` (not `HashMap`) so postcard encoding is
     /// deterministic across processes — needed for the
     /// snapshot-bytes-stable proptest to hold.
-    pub fields: BTreeMap<Path, OpaqueField>,
+    pub fields: BTreeMap<Path, OpaqueValue>,
 }
 
-impl OpaqueSchemaState {
+impl OpaqueRecord {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -108,12 +108,12 @@ impl OpaqueSchemaState {
     }
 
     /// Iterate over `(path, field)` entries — used by client hydration.
-    pub fn iter(&self) -> impl Iterator<Item = (&Path, &OpaqueField)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&Path, &OpaqueValue)> {
         self.fields.iter()
     }
 }
 
-impl Lattice for OpaqueSchemaState {
+impl Lattice for OpaqueRecord {
     fn bottom() -> Self {
         Self::default()
     }
@@ -139,7 +139,7 @@ pub enum OpaqueMutation {}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum OpaqueDelta {}
 
-impl Crdt for OpaqueSchemaState {
+impl Crdt for OpaqueRecord {
     type Mutation = OpaqueMutation;
     type Delta = OpaqueDelta;
 
@@ -149,7 +149,7 @@ impl Crdt for OpaqueSchemaState {
     }
 
     fn mutate(&mut self, _m: Self::Mutation, _ctx: &mut CausalContext) -> Self::Delta {
-        unreachable!("OpaqueSchemaState has no mutations")
+        unreachable!("OpaqueRecord has no mutations")
     }
 }
 
@@ -160,12 +160,12 @@ impl IntoWireOp for OpaqueDelta {
     }
 }
 
-impl SchemaApply for OpaqueSchemaState {
+impl SchemaApply for OpaqueRecord {
     /// Apply a wire delta at the full schema-relative path.
     ///
     /// The path already includes the schema-name head segment + field +
     /// any map keys — it's stored verbatim as the HashMap key. The
-    /// incoming wire delta determines which `OpaqueField` variant lives
+    /// incoming wire delta determines which `OpaqueValue` variant lives
     /// (or gets created) at that path.
     fn apply_wire(
         &mut self,
@@ -178,8 +178,8 @@ impl SchemaApply for OpaqueSchemaState {
                 let field = self
                     .fields
                     .entry(path.clone())
-                    .or_insert_with(|| OpaqueField::Lww(LwwRegister::empty()));
-                let OpaqueField::Lww(reg) = field else {
+                    .or_insert_with(|| OpaqueValue::Lww(LwwRegister::empty()));
+                let OpaqueValue::Lww(reg) = field else {
                     return Err(DeltaError::TypeMismatch {
                         reason: format!("LwwReplace at non-Lww path {path:?}"),
                     });
@@ -190,8 +190,8 @@ impl SchemaApply for OpaqueSchemaState {
                 let field = self
                     .fields
                     .entry(path.clone())
-                    .or_insert_with(|| OpaqueField::OrSet(OrSet::new()));
-                let OpaqueField::OrSet(set) = field else {
+                    .or_insert_with(|| OpaqueValue::OrSet(OrSet::new()));
+                let OpaqueValue::OrSet(set) = field else {
                     return Err(DeltaError::TypeMismatch {
                         reason: format!("OrSetAdd at non-OrSet path {path:?}"),
                     });
@@ -202,8 +202,8 @@ impl SchemaApply for OpaqueSchemaState {
                 let field = self
                     .fields
                     .entry(path.clone())
-                    .or_insert_with(|| OpaqueField::OrSet(OrSet::new()));
-                let OpaqueField::OrSet(set) = field else {
+                    .or_insert_with(|| OpaqueValue::OrSet(OrSet::new()));
+                let OpaqueValue::OrSet(set) = field else {
                     return Err(DeltaError::TypeMismatch {
                         reason: format!("OrSetRemove at non-OrSet path {path:?}"),
                     });
@@ -214,8 +214,8 @@ impl SchemaApply for OpaqueSchemaState {
                 let field = self
                     .fields
                     .entry(path.clone())
-                    .or_insert_with(|| OpaqueField::PnCounter(PnCounter::new()));
-                let OpaqueField::PnCounter(counter) = field else {
+                    .or_insert_with(|| OpaqueValue::PnCounter(PnCounter::new()));
+                let OpaqueValue::PnCounter(counter) = field else {
                     return Err(DeltaError::TypeMismatch {
                         reason: format!("PnCounterDelta at non-PnCounter path {path:?}"),
                     });
@@ -226,8 +226,8 @@ impl SchemaApply for OpaqueSchemaState {
                 let field = self
                     .fields
                     .entry(path.clone())
-                    .or_insert_with(|| OpaqueField::Sequence(Sequence::new()));
-                let OpaqueField::Sequence(seq) = field else {
+                    .or_insert_with(|| OpaqueValue::Sequence(Sequence::new()));
+                let OpaqueValue::Sequence(seq) = field else {
                     return Err(DeltaError::TypeMismatch {
                         reason: format!("SequenceInsert at non-Sequence path {path:?}"),
                     });
@@ -238,8 +238,8 @@ impl SchemaApply for OpaqueSchemaState {
                 let field = self
                     .fields
                     .entry(path.clone())
-                    .or_insert_with(|| OpaqueField::Sequence(Sequence::new()));
-                let OpaqueField::Sequence(seq) = field else {
+                    .or_insert_with(|| OpaqueValue::Sequence(Sequence::new()));
+                let OpaqueValue::Sequence(seq) = field else {
                     return Err(DeltaError::TypeMismatch {
                         reason: format!("SequenceDelete at non-Sequence path {path:?}"),
                     });
@@ -272,8 +272,8 @@ impl SchemaApply for OpaqueSchemaState {
         }
     }
 
-    fn install_state(&mut self, path: &Path, field: OpaqueField) -> Result<(), DeltaError> {
-        // OpaqueSchemaState owns its own per-path storage; install is a
+    fn install_state(&mut self, path: &Path, field: OpaqueValue) -> Result<(), DeltaError> {
+        // OpaqueRecord owns its own per-path storage; install is a
         // direct insert. Used only by `Backend::restore` symmetry; the
         // server side doesn't currently call this.
         self.fields.insert(path.clone(), field);
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn opaque_apply_lww_replace() {
-        let mut s = OpaqueSchemaState::new();
+        let mut s = OpaqueRecord::new();
         let mut state = CausalState::new();
         s.apply_wire(
             &p(&["Frame", "width"]),
@@ -312,7 +312,7 @@ mod tests {
             &ctx_at(&mut state, 1, 1),
         )
         .unwrap();
-        let OpaqueField::Lww(reg) = &s.fields[&p(&["Frame", "width"])] else {
+        let OpaqueValue::Lww(reg) = &s.fields[&p(&["Frame", "width"])] else {
             panic!("expected Lww");
         };
         assert_eq!(reg.get(), Some(&vec![1, 2, 3]));
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn opaque_apply_pn_counter_accumulates() {
-        let mut s = OpaqueSchemaState::new();
+        let mut s = OpaqueRecord::new();
         let mut state = CausalState::new();
         s.apply_wire(
             &p(&["Counted", "edits"]),
@@ -334,7 +334,7 @@ mod tests {
             &ctx_at(&mut state, 1, 2),
         )
         .unwrap();
-        let OpaqueField::PnCounter(c) = &s.fields[&p(&["Counted", "edits"])] else {
+        let OpaqueValue::PnCounter(c) = &s.fields[&p(&["Counted", "edits"])] else {
             panic!("expected PnCounter");
         };
         assert_eq!(c.value(), 7);
@@ -342,8 +342,8 @@ mod tests {
 
     #[test]
     fn opaque_join_preserves_higher_lww_stamp() {
-        let mut a = OpaqueSchemaState::new();
-        let mut b = OpaqueSchemaState::new();
+        let mut a = OpaqueRecord::new();
+        let mut b = OpaqueRecord::new();
         let mut sa = CausalState::new();
         let mut sb = CausalState::new();
         a.apply_wire(
@@ -359,7 +359,7 @@ mod tests {
         )
         .unwrap();
         a.join(b);
-        let OpaqueField::Lww(reg) = &a.fields[&p(&["F", "x"])] else {
+        let OpaqueValue::Lww(reg) = &a.fields[&p(&["F", "x"])] else {
             panic!();
         };
         assert_eq!(reg.get(), Some(&vec![20]));
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn opaque_type_mismatch_is_error() {
-        let mut s = OpaqueSchemaState::new();
+        let mut s = OpaqueRecord::new();
         let mut state = CausalState::new();
         s.apply_wire(
             &p(&["F", "x"]),

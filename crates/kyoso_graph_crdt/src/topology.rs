@@ -52,7 +52,7 @@ struct EdgeStructure {
 
 /// Snapshot format for graph topology.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct GraphSnapshot {
+pub struct GraphTopologySnapshot {
     pub nodes: Vec<NodeSnap>,
     pub edges: Vec<EdgeSnap>,
 }
@@ -203,7 +203,7 @@ impl GraphTopology {
 
 impl Topology for GraphTopology {
     type OpKind = OpKind;
-    type SnapshotState = GraphSnapshot;
+    type SnapshotState = GraphTopologySnapshot;
 
     fn apply_structural_op(&mut self, op: &Self::OpKind, ctx: &CausalContext) {
         match op {
@@ -319,7 +319,7 @@ impl Topology for GraphTopology {
             .collect();
         edges.sort_by_key(|e| e.id);
 
-        GraphSnapshot { nodes, edges }
+        GraphTopologySnapshot { nodes, edges }
     }
 
     fn restore(&mut self, snap: Self::SnapshotState) {

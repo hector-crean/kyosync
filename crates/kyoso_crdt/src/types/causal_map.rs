@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::context::{CausalContext, SubDot};
 use crate::delta::{Path, PathSegment, WireDelta};
 use crate::lattice::{Crdt, DeltaError, Lattice};
-use crate::opaque::OpaqueField;
+use crate::opaque::OpaqueValue;
 use crate::schema::{IntoWireOp, SchemaApply};
 
 /// String-keyed map of CRDT values.
@@ -187,7 +187,7 @@ where
         entry.apply_wire(&tail, delta, ctx)
     }
 
-    fn install_state(&mut self, path: &Path, field: OpaqueField) -> Result<(), DeltaError> {
+    fn install_state(&mut self, path: &Path, field: OpaqueValue) -> Result<(), DeltaError> {
         let (head, tail) = path.split_first().ok_or_else(|| DeltaError::Invalid {
             reason: "CausalMap install_state requires a path with at least the dynamic key"
                 .to_string(),

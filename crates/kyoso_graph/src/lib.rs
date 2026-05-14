@@ -196,14 +196,17 @@ impl Default for GraphEventPropagationConfig {
 ///
 /// ```text
 /// TransactionRecording → CommandApplication → ChangeDetection
-///   → EventGeneration → EventPropagation → Solving
-///   → SnapshotCreation → Consumption
+///   → EventPropagation → Solving → SnapshotCreation
 /// ```
 ///
 /// [`GraphManagerPlugin`] configures this chain and populates
 /// `CommandApplication`, `ChangeDetection`, and `EventPropagation`.
-/// The remaining sets are available for downstream plugins and user
-/// systems.
+/// [`crate::tree::TreePlugin`] adds to `CommandApplication`;
+/// [`crate::transaction::TransactionPlugin`] adds to
+/// `TransactionRecording` + `SnapshotCreation`; solver plugins land in
+/// `Solving`. There are no "downstream consumer" slots — apps schedule
+/// their own systems after this chain by ordering against
+/// `SnapshotCreation` as needed.
 #[derive(SystemSet, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum GraphSystemSet {
     /// External commands arrive (from MCP, network, UI, etc.).
@@ -212,16 +215,12 @@ pub enum GraphSystemSet {
     CommandApplication,
     /// Automatic detection of Added/Changed/Removed components.
     ChangeDetection,
-    /// Reserved for user-defined event generation systems.
-    EventGeneration,
     /// Graph-aware propagation of changes through topology.
     EventPropagation,
     /// Solver/constraint evaluation (see [`SolverSet`]).
     Solving,
     /// State captured for undo/redo and network replication.
     SnapshotCreation,
-    /// Downstream consumers: rendering, network broadcast, etc.
-    Consumption,
 }
 
 /// Generic graph manager plugin that can work with any node and edge types.
@@ -286,11 +285,9 @@ where
                     GraphSystemSet::TransactionRecording,
                     GraphSystemSet::CommandApplication,
                     GraphSystemSet::ChangeDetection,
-                    GraphSystemSet::EventGeneration,
                     GraphSystemSet::EventPropagation,
                     GraphSystemSet::Solving,
                     GraphSystemSet::SnapshotCreation,
-                    GraphSystemSet::Consumption,
                 )
                     .chain(),
             )

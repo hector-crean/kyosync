@@ -572,7 +572,7 @@ impl SchemaApply for EmptySchema {
     fn install_state(
         &mut self,
         _path: &crate::delta::Path,
-        _field: crate::opaque::OpaqueField,
+        _field: crate::opaque::OpaqueValue,
     ) -> Result<(), DeltaError> {
         // No fields to install
         Ok(())

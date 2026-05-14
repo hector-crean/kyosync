@@ -20,7 +20,7 @@ pub use invariants::{
     check_topology, cross_check_cycle_detection, InvariantViolation, ViolationKind,
 };
 pub use op::OpKind;
-pub use topology::{EdgeSnap, GraphSnapshot, GraphTopology, NodeSnap};
+pub use topology::{EdgeSnap, GraphTopology, GraphTopologySnapshot, NodeSnap};
 pub use view::{
     ancestors, connected_component_undirected, descendants, would_create_cycle, GraphView,
 };

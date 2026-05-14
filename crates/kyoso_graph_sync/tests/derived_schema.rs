@@ -1100,7 +1100,7 @@ mod custom_with {
         fn install_state(
             &mut self,
             path: &Path,
-            field: kyoso_crdt::OpaqueField,
+            field: kyoso_crdt::OpaqueValue,
         ) -> Result<(), DeltaError> {
             self.inner.install_state(path, field)
         }
@@ -1248,7 +1248,7 @@ mod compaction_recovery {
     /// ops that would have allowed late replay. Result: late joiner B
     /// had a node entity but no `Counted` properties.
     ///
-    /// Post-fix, the server's snapshot is over `OpaqueSchemaState` so
+    /// Post-fix, the server's snapshot is over `OpaqueRecord` so
     /// the PN-counter state lives in the snapshot itself and is
     /// hydrated into `SchemaDoc<CountedSchema>` on B's Welcome.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1335,7 +1335,7 @@ mod compaction_recovery {
 // Scenario reproduced in production (circuit client, May 2026):
 //   1. Peers A, B, C build out a scene; their per-node typed schema
 //      state (Transform, OnLayer, Resistor params, …) lives in the
-//      server's `OpaqueSchemaState` snapshot once GC compacts the
+//      server's `OpaqueRecord` snapshot once GC compacts the
 //      property ops below the snapshot point.
 //   2. A new peer D joins. Welcome arrives with a snapshot. The graph
 //      plugin's `project_snapshot` spawns the structural marker

@@ -1,10 +1,10 @@
-//! Property tests for [`OpaqueSchemaState`] — the schema-erased layer
+//! Property tests for [`OpaqueRecord`] — the schema-erased layer
 //! the server uses to hold per-entity CRDT state without knowing the
 //! user's typed schemas.
 //!
 //! Covers:
 //! - Random sequences of `WireDelta` variants apply without panicking.
-//! - `OpaqueSchemaState` serializes deterministically (the BTreeMap
+//! - `OpaqueRecord` serializes deterministically (the BTreeMap
 //!   fix means two encodes of equal state produce equal bytes).
 //! - Two replicas applying the same op set in two different orders
 //!   converge to equal state — commutativity at the opaque-merge layer.
@@ -12,7 +12,7 @@
 use kyoso_crdt::context::{CausalContext, CausalState};
 use kyoso_crdt::delta::{Path, PathSegment, WireDelta};
 use kyoso_crdt::id::CrdtId;
-use kyoso_crdt::opaque::OpaqueSchemaState;
+use kyoso_crdt::opaque::OpaqueRecord;
 use kyoso_crdt::schema::SchemaApply;
 use proptest::prelude::*;
 
@@ -83,12 +83,12 @@ fn build_op(
 
 /// Apply one op to `state` with a fresh `CausalState` — matches how
 /// `Backend::apply_remote` runs each op.
-fn apply_one(state: &mut OpaqueSchemaState, op: &SynthOp) {
+fn apply_one(state: &mut OpaqueRecord, op: &SynthOp) {
     let mut causal = CausalState::new();
     let ctx = CausalContext::new(op.op_id, Some(op.seq), &mut causal);
     // Apply errors (e.g. variant mismatch at the same path across two
     // different op kinds) are tolerated — the proptest's job is to
-    // verify the merge doesn't panic, and the OpaqueField::join
+    // verify the merge doesn't panic, and the OpaqueValue::join
     // mismatch path is the documented no-op behavior.
     let _ = state.apply_wire(&op.path, op.delta.clone(), &ctx);
 }
@@ -103,7 +103,7 @@ proptest! {
     fn random_apply_never_panics(
         ops in proptest::collection::vec(synth_op_strategy(), 0..80)
     ) {
-        let mut state = OpaqueSchemaState::new();
+        let mut state = OpaqueRecord::new();
         for (i, raw) in ops.into_iter().enumerate() {
             let op = build_op(raw, (i + 1) as u64);
             apply_one(&mut state, &op);
@@ -120,13 +120,13 @@ proptest! {
     fn opaque_state_postcard_round_trip(
         ops in proptest::collection::vec(synth_op_strategy(), 0..40)
     ) {
-        let mut state = OpaqueSchemaState::new();
+        let mut state = OpaqueRecord::new();
         for (i, raw) in ops.into_iter().enumerate() {
             let op = build_op(raw, (i + 1) as u64);
             apply_one(&mut state, &op);
         }
         let bytes1 = postcard::to_allocvec(&state).expect("encode");
-        let decoded: OpaqueSchemaState = postcard::from_bytes(&bytes1).expect("decode");
+        let decoded: OpaqueRecord = postcard::from_bytes(&bytes1).expect("decode");
         let bytes2 = postcard::to_allocvec(&decoded).expect("re-encode");
         prop_assert_eq!(bytes1, bytes2, "opaque state bytes must be stable");
         prop_assert_eq!(state, decoded, "decoded state must equal original");
@@ -136,7 +136,7 @@ proptest! {
     /// converge to equal state. The state-based merge laws of each
     /// primitive (LWW max-stamp, OR-Set add-tag union, PN-Counter
     /// per-peer max, Sequence position id union) all commute, so
-    /// `OpaqueSchemaState::apply_wire` should be order-independent.
+    /// `OpaqueRecord::apply_wire` should be order-independent.
     #[test]
     fn opaque_apply_is_order_independent(
         ops in proptest::collection::vec(synth_op_strategy(), 1..40),
@@ -148,7 +148,7 @@ proptest! {
             .map(|(i, raw)| build_op(raw, (i + 1) as u64))
             .collect();
 
-        let mut a = OpaqueSchemaState::new();
+        let mut a = OpaqueRecord::new();
         for op in &synth {
             apply_one(&mut a, op);
         }
@@ -160,7 +160,7 @@ proptest! {
             let j = (x as usize) % (i + 1);
             perm.swap(i, j);
         }
-        let mut b = OpaqueSchemaState::new();
+        let mut b = OpaqueRecord::new();
         for &i in &perm {
             apply_one(&mut b, &synth[i]);
         }

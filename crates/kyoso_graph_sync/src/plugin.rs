@@ -15,7 +15,7 @@
 //!   op as bytes, and submits via [`WsBridge`](kyoso_sync::WsBridge).
 //! - Detection: the structural systems
 //!   ([`detect_added_nodes`], [`detect_added_edges`],
-//!   [`detect_tree_position_changes`], [`detect_removed_nodes`],
+//!   [`detect_tree_moves`], [`detect_removed_nodes`],
 //!   [`detect_removed_edges`]) are unchanged from the pre-transport
 //!   refactor.
 
@@ -23,11 +23,11 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use bevy::prelude::*;
-use kyoso_crdt::{Op, OpaqueSchemaState, PathSegment};
+use kyoso_crdt::{Op, OpaqueRecord, PathSegment};
 use kyoso_graph::components::{EdgeFrom, EdgeTo, IncomingEdges};
 use kyoso_graph::queries::GraphComponent;
 use kyoso_graph::tree::{OrderKey, TreeEdge, TreeParent};
-use kyoso_graph_crdt::{GraphSnapshot, OpKind, graph_model};
+use kyoso_graph_crdt::{GraphTopologySnapshot, OpKind, graph_model};
 use kyoso_sync::{ModelRegistry, PeerIdGen, SyncStatus, WsBridge, WsInbound};
 
 use crate::category::ApplyEdgeCategory;
@@ -157,7 +157,7 @@ where
                 graph_inbound_system::<N, E>,
                 detect_added_nodes::<N, E>,
                 detect_added_edges::<N, E>,
-                detect_tree_position_changes::<N, E>,
+                detect_tree_moves::<N, E>,
                 detect_removed_nodes::<N, E>,
                 detect_removed_edges::<N, E>,
                 outbound_system::<N, E>,
@@ -462,7 +462,7 @@ fn project_edge<N, E>(
 fn project_snapshot<N, E>(
     commands: &mut Commands,
     index: &mut EntityCrdtIndex,
-    topo: &GraphSnapshot,
+    topo: &GraphTopologySnapshot,
 ) where
     N: Syncable,
     E: Syncable,
@@ -515,7 +515,7 @@ fn project_snapshot<N, E>(
 /// classification below is reliable.
 fn hydrate_typed_schemas(
     world: &mut World,
-    typed_state: std::collections::BTreeMap<kyoso_crdt::CrdtId, OpaqueSchemaState>,
+    typed_state: std::collections::BTreeMap<kyoso_crdt::CrdtId, OpaqueRecord>,
 ) {
     let hydrators = match world.get_resource::<SchemaHydrators>() {
         Some(h) if !h.by_key.is_empty() => h.by_key.clone(),
@@ -577,7 +577,16 @@ pub(crate) fn detect_added_nodes<N, E>(
     }
 }
 
-fn detect_tree_position_changes<N, E>(
+/// Watch local `TreeParent` / `OrderKey` changes and emit CRDT `Move`
+/// ops on the outbound side.
+///
+/// Named `detect_tree_moves` (not `detect_tree_position_changes`) to
+/// avoid collision with [`kyoso_graph::detect_tree_position_changes`],
+/// which fires the ECS-side `GraphMessage::TreePositionChanged`
+/// propagation event off the same `Changed` query. Both systems
+/// observe the same component change; this one converts it into a
+/// wire op, that one converts it into a propagation event.
+fn detect_tree_moves<N, E>(
     mut engine: ResMut<ClientSyncEngine>,
     index: Res<EntityCrdtIndex>,
     nodes: Query<

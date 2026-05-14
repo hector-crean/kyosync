@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use crate::context::{CausalContext, SubDot};
 use crate::delta::{Path, WireDelta};
 use crate::lattice::{Crdt, DeltaError, Lattice};
-use crate::opaque::OpaqueField;
+use crate::opaque::OpaqueValue;
 use crate::schema::{IntoWireOp, SchemaApply};
 
 /// Per-element bookkeeping.
@@ -316,7 +316,7 @@ where
         self.apply(&typed, ctx)
     }
 
-    fn install_state(&mut self, path: &Path, field: OpaqueField) -> Result<(), DeltaError> {
+    fn install_state(&mut self, path: &Path, field: OpaqueValue) -> Result<(), DeltaError> {
         if !path.is_empty() {
             return Err(DeltaError::Invalid {
                 reason: format!(
@@ -325,9 +325,9 @@ where
                 ),
             });
         }
-        let OpaqueField::Sequence(byte_seq) = field else {
+        let OpaqueValue::Sequence(byte_seq) = field else {
             return Err(DeltaError::TypeMismatch {
-                reason: "expected OpaqueField::Sequence for Sequence".to_string(),
+                reason: "expected OpaqueValue::Sequence for Sequence".to_string(),
             });
         };
         // Decode each element's bytes back to T. Structural metadata

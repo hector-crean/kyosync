@@ -161,7 +161,7 @@ pub fn derive_crdt(input: TokenStream) -> TokenStream {
             fn install_state(
                 &mut self,
                 path: &::kyoso_crdt::Path,
-                field: ::kyoso_crdt::OpaqueField,
+                field: ::kyoso_crdt::OpaqueValue,
             ) -> ::core::result::Result<(), ::kyoso_crdt::DeltaError> {
                 // Same dispatch shape as `apply_wire`: walk the head
                 // segment to the matching field and recurse. Leaf

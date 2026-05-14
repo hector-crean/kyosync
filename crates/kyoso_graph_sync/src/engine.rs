@@ -18,7 +18,7 @@
 //! no presence concept).
 
 use bevy::prelude::*;
-use kyoso_crdt::{ApplyError, CrdtId, EmptySchema, GlobalSeq, IdGen, OpaqueSchemaState, PeerId};
+use kyoso_crdt::{ApplyError, CrdtId, EmptySchema, GlobalSeq, IdGen, OpaqueRecord, PeerId};
 use kyoso_graph_crdt::{EdgeCategory, GraphBackend, GraphTopology, OpKind};
 
 type Op = kyoso_crdt::Op<OpKind>;
@@ -30,10 +30,10 @@ pub type EngineSnapshot = kyoso_crdt::Snapshot<GraphTopology, EmptySchema>;
 
 /// Wire-format snapshot as produced by the server. Carries the same
 /// structural topology as [`EngineSnapshot`] **plus** opaque per-entity
-/// CRDT state ([`OpaqueSchemaState`]) so late joiners can hydrate
+/// CRDT state ([`OpaqueRecord`]) so late joiners can hydrate
 /// typed [`crate::schema_sync::SchemaDoc`] resources from the snapshot
 /// rather than replaying every property op from sequence 0.
-pub type ServerSnapshot = kyoso_crdt::Snapshot<GraphTopology, OpaqueSchemaState>;
+pub type ServerSnapshot = kyoso_crdt::Snapshot<GraphTopology, OpaqueRecord>;
 
 /// Client-side graph sync resource.
 ///
@@ -158,15 +158,22 @@ impl ClientSyncEngine {
         self.inner.pending_len()
     }
 
-    /// Mint a fresh op-id from the engine's id generator. Typed
-    /// plugins use this to keep id-generation centralized.
-    pub fn mint_id(&mut self) -> CrdtId {
+    /// Mint a fresh op-id from the engine's id generator.
+    ///
+    /// `pub(crate)` because the standard outbound path is
+    /// `add_node` / `add_edge` / `move_node` / etc.; the only caller
+    /// inside the crate is [`crate::schema_sync::detect_typed_changes`],
+    /// which has to mint ids and queue ops by hand because the typed
+    /// schema layer doesn't know the structural-op flavor at compile
+    /// time. External callers should not bypass the structural API.
+    pub(crate) fn mint_id(&mut self) -> CrdtId {
         self.inner.mint_id()
     }
 
-    /// Push a pre-built [`Op`] onto the pending queue. The outbound
-    /// system drains the queue each tick and ships ops via the WS.
-    pub fn enqueue(&mut self, op: Op) {
+    /// Push a pre-built [`Op`] onto the pending queue.
+    ///
+    /// `pub(crate)` — same rationale as [`Self::mint_id`].
+    pub(crate) fn enqueue(&mut self, op: Op) {
         self.inner.enqueue(op);
     }
 

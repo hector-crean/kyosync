@@ -16,7 +16,7 @@ use crate::context::CausalContext;
 use crate::delta::{Path, WireDelta};
 use crate::id::{GlobalSeq, PeerId};
 use crate::lattice::{Crdt, DeltaError, Lattice};
-use crate::opaque::OpaqueField;
+use crate::opaque::OpaqueValue;
 use crate::schema::{IntoWireOp, SchemaApply};
 
 /// Internal LWW stamp. Total ordering is `(seq, peer)` lexicographic;
@@ -169,7 +169,7 @@ where
         self.apply(&typed, ctx)
     }
 
-    fn install_state(&mut self, path: &Path, field: OpaqueField) -> Result<(), DeltaError> {
+    fn install_state(&mut self, path: &Path, field: OpaqueValue) -> Result<(), DeltaError> {
         if !path.is_empty() {
             return Err(DeltaError::Invalid {
                 reason: format!(
@@ -178,9 +178,9 @@ where
                 ),
             });
         }
-        let OpaqueField::Lww(byte_reg) = field else {
+        let OpaqueValue::Lww(byte_reg) = field else {
             return Err(DeltaError::TypeMismatch {
-                reason: "expected OpaqueField::Lww for LwwRegister".to_string(),
+                reason: "expected OpaqueValue::Lww for LwwRegister".to_string(),
             });
         };
         // Decode the opaque bytes back to T using the same postcard
