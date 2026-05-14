@@ -10,8 +10,8 @@
 //!   text, nested for TypeStyle inside Text).
 //! - **Structural markers** — `FigmaNode` and `FigmaEdge` (zero-sized
 //!   types) used as the `<N, E>` parameters to
-//!   `kyoso_sync::CrdtSyncPlugin`. Every spawned figma entity carries
-//!   `FigmaNode` plus exactly one of the field-bearing components.
+//!   [`kyoso_graph_sync::GraphSyncPlugin`]. Every spawned figma entity
+//!   carries `FigmaNode` plus exactly one of the field-bearing components.
 //! - **`KyosoFigmaPlugin`** — single-call entry point that registers
 //!   all per-component schema plugins.
 //! - **Figma import adapter** — `KyosoVisitor` impl over the vendored
@@ -61,18 +61,19 @@ pub use walker::{NodeContext, NodeVisitor, SubcanvasNodeExt, Walker};
 // ---------------------------------------------------------------------------
 
 /// Zero-sized marker: every kyoso_figma node entity carries this. Used
-/// as the `N` parameter to [`kyoso_sync::CrdtSyncPlugin`] so structural
-/// ops (`AddNode`, `RemoveNode`, `Move`) operate on a uniform "this is
-/// a figma node" identity, decoupled from which specific node kind
-/// (`Frame` / `Rectangle` / `Text` / ...) the entity carries.
+/// as the `N` parameter to [`kyoso_graph_sync::GraphSyncPlugin`] so
+/// structural ops (`AddNode`, `RemoveNode`, `Move`) operate on a
+/// uniform "this is a figma node" identity, decoupled from which
+/// specific node kind (`Frame` / `Rectangle` / `Text` / ...) the
+/// entity carries.
 #[derive(Component, Default, Clone, Debug, PartialEq, Eq, Reflect)]
 #[reflect(Component, Default)]
 pub struct FigmaNode;
 
 /// Zero-sized marker: every kyoso_figma edge entity carries this. Used
-/// as the `E` parameter to [`kyoso_sync::CrdtSyncPlugin`]. The initial
-/// cut only uses tree edges (via `kyoso_graph::tree`); reference edges
-/// (component→main, prototype links) are deferred.
+/// as the `E` parameter to [`kyoso_graph_sync::GraphSyncPlugin`]. The
+/// initial cut only uses tree edges (via `kyoso_graph::tree`);
+/// reference edges (component→main, prototype links) are deferred.
 #[derive(Component, Default, Clone, Debug, PartialEq, Eq, Reflect)]
 #[reflect(Component, Default)]
 pub struct FigmaEdge;

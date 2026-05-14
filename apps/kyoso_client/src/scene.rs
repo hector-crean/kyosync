@@ -5,9 +5,10 @@
 //!   per-field synced state (name, fills, layout, etc.).
 //! - **Edges** are weave-style typed cross-frame relationships. Each
 //!   carries `EdgeFrom`/`EdgeTo`, `kyoso_figma::FigmaEdge` (the
-//!   structural marker for `<E>` in `CrdtSyncPlugin`), and exactly one
-//!   of the per-kind marker components from [`crate::weave`]. A
-//!   reusable polyline rendering plumbs colour from the kind.
+//!   structural marker for `<E>` in `kyoso_graph_sync::GraphSyncPlugin`),
+//!   and exactly one of the per-kind marker components from
+//!   [`crate::weave`]. A reusable polyline rendering plumbs colour
+//!   from the kind.
 //!
 //! AppEvent projection (`NodeAppeared` / `NodeMoved` / `EdgeAppeared` /
 //! removals) follows the same shape as before — those are abstract

@@ -162,7 +162,7 @@ impl CommentsBackend {
 
     /// Queue an [`OpKind::EditBody`] op. Local visibility waits for the
     /// server echo (LWW stamp ordering would be wrong with pre-apply,
-    /// same as graph's `Document<S>::mutate_node`).
+    /// same as the graph backend's property mutations).
     pub fn edit_body(&mut self, target: CrdtId, body: String) {
         let op_id = self.ids.next();
         self.pending.push(Op::new(

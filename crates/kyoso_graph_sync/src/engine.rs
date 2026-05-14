@@ -1,29 +1,25 @@
 //! Client-side graph sync engine: id-generation, op queue, applied-seq
-//! tracking plus the property/topology bookkeeping that detection
-//! systems need for echo prevention and field-level diffs.
+//! tracking plus the topology bookkeeping that detection systems need
+//! for echo prevention and field-level diffs.
 //!
 //! Wraps a [`GraphBackend<EmptySchema>`] internally — structure-only
-//! backend for ECS sync (properties are managed separately via schema
-//! sync plugins).
+//! backend for ECS sync (typed properties live in per-component
+//! [`crate::schema_sync::SchemaDoc`] resources, not here).
 //!
 //! ## Why this exists separately from `GraphBackend`
 //!
 //! `GraphBackend` is a model-agnostic CRDT engine in `kyoso_graph_crdt`
 //! — it has no Bevy types and no `Resource` derive. `ClientSyncEngine`
-//! is the Bevy `Resource` wrapper that adds:
+//! is the Bevy `Resource` wrapper that lets [`crate::GraphSyncPlugin`]
+//! systems share one mutable handle to the engine across the inbound,
+//! outbound, and detection phases of each frame.
 //!
-//! - The `just_projected` set used by detection systems to suppress
-//!   echo of remote ops the inbound projector just handled.
-//! - A stable Bevy-side type that the [`crate::GraphSyncPlugin`]
-//!   systems can reference.
-//!
-//! Server-side mirrors stay as plain `GraphBackend<EmptySchema>` (no
-//! Bevy ECS, no presence concept).
+//! Server-side mirrors stay as plain `GraphBackend<…>` (no Bevy ECS,
+//! no presence concept).
 
 use bevy::prelude::*;
 use kyoso_crdt::{ApplyError, CrdtId, EmptySchema, GlobalSeq, IdGen, OpaqueSchemaState, PeerId};
 use kyoso_graph_crdt::{EdgeCategory, GraphBackend, GraphTopology, OpKind};
-use std::collections::HashSet;
 
 type Op = kyoso_crdt::Op<OpKind>;
 /// In-memory snapshot of the structural graph backend. Resolves to the
@@ -49,10 +45,6 @@ pub type ServerSnapshot = kyoso_crdt::Snapshot<GraphTopology, OpaqueSchemaState>
 #[derive(Resource)]
 pub struct ClientSyncEngine {
     inner: GraphBackend<EmptySchema>,
-    /// Op IDs the inbound projector spawned this frame. Detection
-    /// systems skip these to suppress echoing remote ops back. Cleared
-    /// at the end of each frame.
-    just_projected: HashSet<CrdtId>,
 }
 
 impl Default for ClientSyncEngine {
@@ -75,7 +67,6 @@ impl ClientSyncEngine {
     pub fn with_shared_ids(ids: IdGen) -> Self {
         Self {
             inner: GraphBackend::with_shared_ids(ids),
-            just_projected: HashSet::new(),
         }
     }
 
@@ -223,23 +214,6 @@ impl ClientSyncEngine {
     pub fn incoming_edge_ids(&self, n: CrdtId) -> impl Iterator<Item = CrdtId> + '_ {
         self.inner.incoming_edge_ids(n)
     }
-
-    // -----------------------------------------------------------------
-    // Echo prevention
-    // -----------------------------------------------------------------
-
-    pub fn mark_just_projected(&mut self, id: CrdtId) {
-        self.just_projected.insert(id);
-    }
-
-    #[must_use]
-    pub fn is_just_projected(&self, id: CrdtId) -> bool {
-        self.just_projected.contains(&id)
-    }
-
-    pub fn clear_just_projected(&mut self) {
-        self.just_projected.clear();
-    }
 }
 
 #[cfg(test)]
@@ -265,15 +239,5 @@ mod tests {
         assert_eq!(drained.len(), 1);
         assert!(matches!(drained[0].kind, OpKind::AddNode));
         assert_eq!(engine.pending_len(), 0);
-    }
-
-    #[test]
-    fn just_projected_is_per_frame() {
-        let mut engine = ClientSyncEngine::with_peer(1);
-        let id = CrdtId::new(2, 0);
-        engine.mark_just_projected(id);
-        assert!(engine.is_just_projected(id));
-        engine.clear_just_projected();
-        assert!(!engine.is_just_projected(id));
     }
 }

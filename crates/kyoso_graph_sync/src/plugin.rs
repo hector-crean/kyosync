@@ -81,7 +81,7 @@ pub struct RemoteOpApplied(pub GraphOp);
 ///     ))
 ///     .run();
 ///
-/// // Single-model graph (legacy convenience)
+/// // Single-model graph (transport bundled in)
 /// App::new()
 ///     .add_plugins(GraphSyncPlugin::<MyNode, MyEdge>::new("ws://...", "demo"))
 ///     .run();
