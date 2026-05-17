@@ -2,10 +2,10 @@
 //!
 //! Shows how to modify polyline vertices at runtime for animations.
 //!
-//! Run with: `cargo run --package bild_polyline --example animated`
+//! Run with: `cargo run --package kyoso_polyline --example animated`
 
 use bevy::prelude::*;
-use bild_polyline::prelude::*;
+use kyoso_polyline::prelude::*;
 
 fn main() {
     App::new()

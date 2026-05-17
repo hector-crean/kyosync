@@ -4,10 +4,10 @@
 //! - Non-perspective: Lines maintain constant screen-space width
 //! - Perspective: Lines shrink with distance, simulating real 3D tubes
 //!
-//! Run with: `cargo run --package bild_polyline --example perspective`
+//! Run with: `cargo run --package kyoso_polyline --example perspective`
 
 use bevy::prelude::*;
-use bild_polyline::prelude::*;
+use kyoso_polyline::prelude::*;
 
 fn main() {
     App::new()

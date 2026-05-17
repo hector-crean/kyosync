@@ -2,10 +2,10 @@
 //!
 //! Demonstrates creating various geometric primitives using polylines.
 //!
-//! Run with: `cargo run --package bild_polyline --example shapes`
+//! Run with: `cargo run --package kyoso_polyline --example shapes`
 
 use bevy::prelude::*;
-use bild_polyline::prelude::*;
+use kyoso_polyline::prelude::*;
 use std::f32::consts::{PI, TAU};
 
 fn main() {

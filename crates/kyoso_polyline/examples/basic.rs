@@ -1,9 +1,9 @@
-//! Basic polyline example demonstrating the core functionality of bild_polyline.
+//! Basic polyline example demonstrating the core functionality of kyoso_polyline.
 //!
-//! Run with: `cargo run --package bild_polyline --example basic`
+//! Run with: `cargo run --package kyoso_polyline --example basic`
 
 use bevy::prelude::*;
-use bild_polyline::prelude::*;
+use kyoso_polyline::prelude::*;
 
 fn main() {
     App::new()

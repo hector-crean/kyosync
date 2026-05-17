@@ -2,10 +2,10 @@
 //!
 //! Shows various widths, colors, transparency, and depth bias settings.
 //!
-//! Run with: `cargo run --package bild_polyline --example materials`
+//! Run with: `cargo run --package kyoso_polyline --example materials`
 
 use bevy::prelude::*;
-use bild_polyline::prelude::*;
+use kyoso_polyline::prelude::*;
 
 fn main() {
     App::new()
