@@ -5,7 +5,7 @@
 //! [`ClientSyncEngine`], the structural detection systems, the inbound
 //! projector, the per-category edge dispatch ([`SyncedEdgeCategoryPlugin`]),
 //! and the typed schema sync framework
-//! ([`SchemaSyncedNodeComponentPlugin`] etc.).
+//! ([`SchemaSyncedComponentPlugin`] etc.).
 //!
 //! Add [`SyncTransportPlugin`](kyoso_sync::SyncTransportPlugin) first,
 //! then [`GraphSyncPlugin`]:
@@ -26,22 +26,25 @@
 //!     .run();
 //! ```
 
-pub mod builtin_schemas;
 pub mod category;
 pub mod engine;
 pub mod index;
 pub mod plugin;
 pub mod schema_sync;
 
-pub use builtin_schemas::TransformSchema;
 pub use category::{EdgeCategoryMarker, EdgeCategoryProjectors, SyncedEdgeCategoryPlugin};
 pub use engine::ClientSyncEngine;
 pub use index::EntityCrdtIndex;
 pub use plugin::{GraphSyncPlugin, RemoteOpApplied, Syncable};
-pub use schema_sync::{
-    SchemaDoc, SchemaField, SchemaMutations, SchemaSync, SchemaSyncedEdgeComponentPlugin,
-    SchemaSyncedNodeComponentPlugin,
-};
+// Graph providers for the `kyoso_sync` component-sync pipeline.
+pub use schema_sync::{EdgeTarget, NodeTarget};
 
-// Re-export the derive macro alongside the trait.
-pub use kyoso_sync_derive::SchemaSync;
+// The model-agnostic typed-schema trait layer (trait + derive macro),
+// the built-in `SchemaSync` impls, and the whole component-sync pipeline
+// (`SchemaSyncedComponentPlugin`, `SchemaDoc`, `SchemaTarget`, `SyncSet`)
+// moved to `kyoso_sync`. Re-exported here so existing
+// `kyoso_graph_sync::*` imports keep working.
+pub use kyoso_sync::{
+    SchemaDoc, SchemaField, SchemaMutations, SchemaSync, SchemaSyncedComponentPlugin,
+    SchemaTarget, SyncSet, TargetKind, TransformSchema,
+};

@@ -10,7 +10,6 @@ description = "Stateful WebSocket coordinator for kyoso_crdt-replicated graphs"
 [dependencies]
 kyoso_crdt          = { workspace = true }
 kyoso_graph_crdt    = { workspace = true }
-kyoso_comments_crdt = { workspace = true }
 
 # Web framework
 axum       = { workspace = true }
@@ -41,7 +40,6 @@ async-trait = { workspace = true }
 
 [dev-dependencies]
 tokio-tungstenite   = { workspace = true }
-kyoso_comments_crdt = { workspace = true }
 kyoso_graph_crdt    = { workspace = true }
 criterion           = { workspace = true }
 

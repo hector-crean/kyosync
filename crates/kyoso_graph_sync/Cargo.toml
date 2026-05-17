@@ -8,11 +8,10 @@ license.workspace = true
 description = "Bevy ECS plugin for the graph CRDT model. Sits on top of kyoso_sync's multi-model transport."
 
 [dependencies]
-kyoso_crdt        = { workspace = true }
-kyoso_graph       = { workspace = true }
-kyoso_graph_crdt  = { workspace = true }
-kyoso_sync        = { workspace = true }
-kyoso_sync_derive = { workspace = true }
+kyoso_crdt       = { workspace = true }
+kyoso_graph      = { workspace = true }
+kyoso_graph_crdt = { workspace = true }
+kyoso_sync       = { workspace = true }
 
 bevy     = { workspace = true }
 postcard = { workspace = true }

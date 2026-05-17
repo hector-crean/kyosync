@@ -24,7 +24,6 @@ use std::time::{Duration, Instant};
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use hdrhistogram::Histogram;
-use kyoso_comments_crdt::{CommentOpKind, comments_model};
 use kyoso_crdt::{CrdtId, EnvelopeClientMsg, EnvelopeServerMsg, ModelId, Op, PeerId, Tier};
 use kyoso_graph_crdt::{OpKind, graph_model};
 use kyoso_server::{AppState, app};
@@ -38,9 +37,6 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 #[serde(rename_all = "lowercase")]
 pub enum LoadModel {
     Graph,
-    Comments,
-    /// 50/50 graph + comments alternating per client.
-    Mixed,
 }
 
 impl std::str::FromStr for LoadModel {
@@ -48,8 +44,6 @@ impl std::str::FromStr for LoadModel {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "graph" => Ok(Self::Graph),
-            "comments" => Ok(Self::Comments),
-            "mixed" => Ok(Self::Mixed),
             other => Err(format!("unknown model: {other}")),
         }
     }
@@ -115,23 +109,12 @@ pub async fn run(cfg: LoadConfig) -> std::io::Result<LoadReport> {
 
     let started = Instant::now();
     let mut tasks = Vec::with_capacity(cfg.clients);
-    let model_for = |i: usize| match cfg.model {
-        LoadModel::Graph => graph_model(),
-        LoadModel::Comments => comments_model(),
-        LoadModel::Mixed => {
-            if i % 2 == 0 {
-                graph_model()
-            } else {
-                comments_model()
-            }
-        }
-    };
     for i in 0..cfg.clients {
         let url = url.clone();
         let room = cfg.room.clone();
         let rate = cfg.rate_per_client;
         let dur = cfg.duration;
-        let model = model_for(i);
+        let model = graph_model();
         tasks.push(tokio::spawn(async move {
             client_loop(url, room, model, rate, dur, i).await
         }));
@@ -287,10 +270,7 @@ async fn client_loop(
                     };
                     if let EnvelopeServerMsg::Apply { model, payload } = env {
                         if model != model_for_reader { continue; }
-                        // Decode just enough to extract the op id —
-                        // both OpKind and CommentOpKind share the
-                        // `Op<K> { id, seq, kind: K }` envelope.
-                        // We try graph first, then comments.
+                        // Decode just enough to extract the op id.
                         let id_opt = decode_op_id_for_model(&model_for_reader, &payload);
                         if let Some(id) = id_opt {
                             let removed = pending_clone.lock().await.remove(&id);
@@ -321,7 +301,7 @@ async fn client_loop(
         next_at += Duration::from_micros(interval_us);
         local_seq += 1;
         let op_id = CrdtId::new(peer, local_seq);
-        let payload = match build_op_payload(&model, op_id, peer) {
+        let payload = match build_op_payload(&model, op_id) {
             Some(p) => p,
             None => {
                 stats.errors += 1;
@@ -348,19 +328,9 @@ async fn client_loop(
     Ok(stats)
 }
 
-fn build_op_payload(model: &ModelId, op_id: CrdtId, peer: PeerId) -> Option<Vec<u8>> {
+fn build_op_payload(model: &ModelId, op_id: CrdtId) -> Option<Vec<u8>> {
     if *model == graph_model() {
         let op: Op<OpKind> = Op::new(op_id, OpKind::AddNode);
-        postcard::to_allocvec(&op).ok()
-    } else if *model == comments_model() {
-        let op: Op<CommentOpKind> = Op::new(
-            op_id,
-            CommentOpKind::AddComment {
-                anchor: CrdtId::new(peer, 0),
-                parent: None,
-                body: "ld".into(),
-            },
-        );
         postcard::to_allocvec(&op).ok()
     } else {
         None
@@ -370,9 +340,6 @@ fn build_op_payload(model: &ModelId, op_id: CrdtId, peer: PeerId) -> Option<Vec<
 fn decode_op_id_for_model(model: &ModelId, payload: &[u8]) -> Option<CrdtId> {
     if *model == graph_model() {
         let op: Op<OpKind> = postcard::from_bytes(payload).ok()?;
-        Some(op.id)
-    } else if *model == comments_model() {
-        let op: Op<CommentOpKind> = postcard::from_bytes(payload).ok()?;
         Some(op.id)
     } else {
         None
@@ -386,22 +353,26 @@ async fn send_envelope<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    let bytes = msg.encode().map_err(|e| std::io::Error::other(format!("encode: {e}")))?;
+    let bytes = msg
+        .encode()
+        .map_err(|e| std::io::Error::other(format!("encode: {e}")))?;
     sink.send(WsMessage::Binary(bytes.into()))
         .await
         .map_err(|e| std::io::Error::other(format!("ws send: {e}")))?;
     Ok(())
 }
 
-async fn read_until_welcome<S>(
-    stream: &mut SplitStream<WebSocketStream<S>>,
-) -> Option<PeerId>
+async fn read_until_welcome<S>(stream: &mut SplitStream<WebSocketStream<S>>) -> Option<PeerId>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     while let Some(frame) = stream.next().await {
-        let Ok(WsMessage::Binary(bytes)) = frame else { continue };
-        let Ok(env) = EnvelopeServerMsg::decode(&bytes) else { continue };
+        let Ok(WsMessage::Binary(bytes)) = frame else {
+            continue;
+        };
+        let Ok(env) = EnvelopeServerMsg::decode(&bytes) else {
+            continue;
+        };
         if let EnvelopeServerMsg::Welcome { peer, .. } = env {
             return Some(peer);
         }

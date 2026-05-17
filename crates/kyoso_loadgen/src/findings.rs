@@ -323,10 +323,6 @@ fn divergence_finding(model: &str, run: &ChaosRunShape) -> Finding {
             "crates/kyoso_graph_crdt/src/backend.rs".to_string(),
             "crates/kyoso_graph_crdt/src/op.rs".to_string(),
         ],
-        "comments" => vec![
-            "crates/kyoso_comments_crdt/src/backend.rs".to_string(),
-            "crates/kyoso_comments_crdt/src/op.rs".to_string(),
-        ],
         _ => Vec::new(),
     };
     let repro = format!(
@@ -392,8 +388,10 @@ fn parse_loadgen(path: &Path) -> Option<(String, LoadgenProfile, Vec<Finding>)> 
                 "loadgen profile '{}' reported {} errors",
                 profile_name, report.errors
             ),
-            details: format!("ops_submitted={} ops_echoed={} errors={}",
-                report.ops_submitted, report.ops_echoed, report.errors),
+            details: format!(
+                "ops_submitted={} ops_echoed={} errors={}",
+                report.ops_submitted, report.ops_echoed, report.errors
+            ),
             repro: Some(format!("just bench-load-{profile_name}")),
             suspected_files: vec![
                 "crates/kyoso_sync/src/client.rs".to_string(),
@@ -537,10 +535,7 @@ fn parse_scenario(path: &Path) -> Option<(ScenarioParseKind, Vec<Finding>)> {
                 layer: "scenarios".to_string(),
                 title: format!("scenario `{}` converged", report.scenario),
                 details: report.summary.clone(),
-                repro: Some(format!(
-                    "just scenario {}",
-                    report.scenario
-                )),
+                repro: Some(format!("just scenario {}", report.scenario)),
                 suspected_files: vec![],
             });
         }
@@ -570,10 +565,7 @@ fn parse_scenario(path: &Path) -> Option<(ScenarioParseKind, Vec<Finding>)> {
             findings.push(Finding {
                 severity: Severity::Critical,
                 layer: "scenarios".to_string(),
-                title: format!(
-                    "scenario `{}` diverged between peers",
-                    report.scenario
-                ),
+                title: format!("scenario `{}` diverged between peers", report.scenario),
                 details: detail,
                 repro: Some(format!("just scenario {}", report.scenario)),
                 suspected_files: vec![
@@ -590,9 +582,7 @@ fn parse_scenario(path: &Path) -> Option<(ScenarioParseKind, Vec<Finding>)> {
                 title: format!("scenario `{}` aborted (timeout / panic)", report.scenario),
                 details: report.summary.clone(),
                 repro: Some(format!("just scenario {}", report.scenario)),
-                suspected_files: vec![
-                    "crates/kyoso_scenarios/src/scenarios.rs".to_string(),
-                ],
+                suspected_files: vec!["crates/kyoso_scenarios/src/scenarios.rs".to_string()],
             });
         }
     }
@@ -639,10 +629,22 @@ impl Findings {
         out.push_str(&format!(
             "- **Chaos** ({} sweep{}, {} seed{}): {} {}\n",
             self.summary.chaos.sweeps_run,
-            if self.summary.chaos.sweeps_run == 1 { "" } else { "s" },
+            if self.summary.chaos.sweeps_run == 1 {
+                ""
+            } else {
+                "s"
+            },
             self.summary.chaos.total_seeds,
-            if self.summary.chaos.total_seeds == 1 { "" } else { "s" },
-            if self.summary.chaos.all_converged { "✓ all converged" } else { "✗ divergences detected" },
+            if self.summary.chaos.total_seeds == 1 {
+                ""
+            } else {
+                "s"
+            },
+            if self.summary.chaos.all_converged {
+                "✓ all converged"
+            } else {
+                "✗ divergences detected"
+            },
             if self.summary.chaos.diverged_seeds > 0 {
                 format!("({} diverged)", self.summary.chaos.diverged_seeds)
             } else {
@@ -659,7 +661,11 @@ impl Findings {
         out.push_str(&format!(
             "- **Loadgen**: {} profile{}\n",
             self.summary.loadgen.profiles.len(),
-            if self.summary.loadgen.profiles.len() == 1 { "" } else { "s" }
+            if self.summary.loadgen.profiles.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
         ));
         for (name, p) in &self.summary.loadgen.profiles {
             out.push_str(&format!(

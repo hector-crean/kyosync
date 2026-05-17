@@ -20,7 +20,6 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use kyoso_comments_crdt::{CommentOpKind, comments_model};
 use kyoso_crdt::{
     CrdtId, EnvelopeClientMsg, EnvelopeServerMsg, ModelId, Op, Path, PeerId, SubDot, WireDelta,
 };
@@ -254,54 +253,6 @@ fn graph_ops() -> Vec<OpSize> {
     ]
 }
 
-fn comment_ops() -> Vec<OpSize> {
-    let model = comments_model();
-    let peer: PeerId = 1;
-    let id = |seq| CrdtId::new(peer, seq);
-    let stamped = |kind: CommentOpKind| {
-        let mut op = Op::new(id(1), kind);
-        op.seq = Some(42);
-        op
-    };
-    vec![
-        measure_storage(
-            "comments",
-            "AddComment (root, 16B body)",
-            &stamped(CommentOpKind::AddComment {
-                anchor: id(2),
-                parent: None,
-                body: "looks great here".into(),
-            }),
-            &model,
-        ),
-        measure_storage(
-            "comments",
-            "AddComment (reply, 64B body)",
-            &stamped(CommentOpKind::AddComment {
-                anchor: id(2),
-                parent: Some(id(3)),
-                body: "agreed — let's tighten the corner radius and ship the next pass".into(),
-            }),
-            &model,
-        ),
-        measure_storage(
-            "comments",
-            "EditBody (32B body)",
-            &stamped(CommentOpKind::EditBody {
-                target: id(2),
-                body: "rewriting after design review pass".into(),
-            }),
-            &model,
-        ),
-        measure_storage(
-            "comments",
-            "DeleteComment",
-            &stamped(CommentOpKind::DeleteComment { target: id(2) }),
-            &model,
-        ),
-    ]
-}
-
 fn presence_payloads() -> Vec<PresenceSize> {
     let peer: PeerId = 1;
     // Cursor: peer + (f32 x, f32 y) + small modifier byte.
@@ -314,9 +265,12 @@ fn presence_payloads() -> Vec<PresenceSize> {
     let selection_5: Vec<u8> =
         postcard::to_allocvec(&(1u64..=5).map(|s| CrdtId::new(peer, s)).collect::<Vec<_>>())
             .unwrap();
-    let selection_20: Vec<u8> =
-        postcard::to_allocvec(&(1u64..=20).map(|s| CrdtId::new(peer, s)).collect::<Vec<_>>())
-            .unwrap();
+    let selection_20: Vec<u8> = postcard::to_allocvec(
+        &(1u64..=20)
+            .map(|s| CrdtId::new(peer, s))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
     // Combined awareness: cursor + viewport + selection_5 + display_name.
     let awareness: Vec<u8> = postcard::to_allocvec(&(
         (1234.5_f32, 678.9_f32),
@@ -374,7 +328,10 @@ fn print_table(report: &WireReport) {
     }
     eprintln!();
     eprintln!("=== Presence payloads (ephemeral, fanout-only) ===");
-    eprintln!("{:<54} {:>8} {:>8} {:>8}", "label", "payload", "submit", "apply");
+    eprintln!(
+        "{:<54} {:>8} {:>8} {:>8}",
+        "label", "payload", "submit", "apply"
+    );
     for p in &report.presence_payloads {
         eprintln!(
             "{:<54} {:>8} {:>8} {:>8}",
@@ -400,8 +357,7 @@ fn print_table(report: &WireReport) {
 
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
-    let mut storage_ops = graph_ops();
-    storage_ops.extend(comment_ops());
+    let storage_ops = graph_ops();
     let presence = presence_payloads();
     let fanout = build_fanout_rows(&storage_ops, &presence);
     let report = WireReport {

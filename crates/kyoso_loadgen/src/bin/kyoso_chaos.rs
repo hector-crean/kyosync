@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! kyoso_chaos \
-//!     --model {graph|comments} \
+//!     --model graph \
 //!     --peers 5 \
 //!     --rounds 200 \
 //!     --drop-prob 0.1 \
@@ -19,9 +19,8 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use kyoso_comments_crdt::CommentsBackend;
-use kyoso_crdt::{CrdtId, CrdtModel, EmptySchema};
-use kyoso_graph_crdt::{check_topology, GraphBackend};
+use kyoso_crdt::EmptySchema;
+use kyoso_graph_crdt::{GraphBackend, check_topology};
 use kyoso_loadgen::sim::{ChaosConfig, SweepReport, sweep_seeds};
 use rand::Rng;
 
@@ -34,16 +33,9 @@ fn graph_invariants(canonical: &GraphBackend<EmptySchema>) -> Vec<String> {
         .collect()
 }
 
-/// Invariants closure for non-graph models — nothing structural to
-/// check at this layer.
-fn no_invariants<M>(_: &M) -> Vec<String> {
-    Vec::new()
-}
-
 #[derive(clap::ValueEnum, Clone, Debug)]
 enum SimModel {
     Graph,
-    Comments,
 }
 
 /// Named graph workloads — distinct op-mix profiles that stress
@@ -154,12 +146,6 @@ fn main() -> std::io::Result<()> {
                 graph_invariants,
             ),
         },
-        SimModel::Comments => sweep_seeds::<CommentsBackend, _, _>(
-            base_cfg,
-            seeds,
-            comments_mutate,
-            no_invariants,
-        ),
     };
 
     eprintln!("{report}");
@@ -250,41 +236,6 @@ fn graph_mutate(
         if !snap.topology.nodes.is_empty() {
             let idx = rng.gen_range(0..snap.topology.nodes.len());
             backend.remove_node(snap.topology.nodes[idx].id);
-        }
-    }
-}
-
-/// Per-round mutation for the comments backend. Each peer adds a
-/// comment ~30% of the time and edits a random existing comment ~10%
-/// of the time.
-fn comments_mutate(
-    backend: &mut CommentsBackend,
-    rng: &mut rand::rngs::StdRng,
-    _round: usize,
-    _peer: kyoso_crdt::PeerId,
-) {
-    if rng.gen_bool(0.3) {
-        backend.add_comment(
-            CrdtId::new(99, 42),
-            None,
-            format!("body-{}", rng.gen_range(0..10_000)),
-        );
-    }
-    if rng.gen_bool(0.10) {
-        let snap = backend.snapshot();
-        if !snap.comments.is_empty() {
-            let idx = rng.gen_range(0..snap.comments.len());
-            backend.edit_body(
-                snap.comments[idx].id,
-                format!("v-{}", rng.gen_range(0..10_000)),
-            );
-        }
-    }
-    if rng.gen_bool(0.03) {
-        let snap = backend.snapshot();
-        if !snap.comments.is_empty() {
-            let idx = rng.gen_range(0..snap.comments.len());
-            backend.delete_comment(snap.comments[idx].id);
         }
     }
 }

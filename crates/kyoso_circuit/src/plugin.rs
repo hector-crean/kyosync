@@ -14,7 +14,7 @@
 //! of which subset of edge kinds an app cares about.
 
 use bevy::prelude::*;
-use kyoso_graph_sync::{GraphSyncPlugin, SchemaSyncedNodeComponentPlugin};
+use kyoso_graph_sync::{GraphSyncPlugin, NodeTarget, SchemaSyncedComponentPlugin};
 use kyoso_sync::SyncTransportPlugin;
 
 use crate::components::{Capacitor, Ground, Inductor, Resistor, VoltageSource};
@@ -34,15 +34,15 @@ impl Plugin for KyosoCircuitPlugin {
         app.add_plugins((
             SyncTransportPlugin::new(self.server_url.clone(), self.room.clone()),
             GraphSyncPlugin::<CircuitNode, CircuitEdge>::default(),
-            SchemaSyncedNodeComponentPlugin::<CircuitNode, CircuitEdge, Resistor>::default(),
-            SchemaSyncedNodeComponentPlugin::<CircuitNode, CircuitEdge, Capacitor>::default(),
-            SchemaSyncedNodeComponentPlugin::<CircuitNode, CircuitEdge, Inductor>::default(),
-            SchemaSyncedNodeComponentPlugin::<CircuitNode, CircuitEdge, VoltageSource>::default(),
-            SchemaSyncedNodeComponentPlugin::<CircuitNode, CircuitEdge, Ground>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Resistor>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Capacitor>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Inductor>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, VoltageSource>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Ground>::default(),
         ));
         app.add_plugins((
-            SchemaSyncedNodeComponentPlugin::<CircuitNode, CircuitEdge, Transform>::default(),
-            SchemaSyncedNodeComponentPlugin::<CircuitNode, CircuitEdge, OnLayer>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Transform>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, OnLayer>::default(),
         ));
     }
 }

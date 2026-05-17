@@ -161,11 +161,11 @@ impl ClientSyncEngine {
     /// Mint a fresh op-id from the engine's id generator.
     ///
     /// `pub(crate)` because the standard outbound path is
-    /// `add_node` / `add_edge` / `move_node` / etc.; the only caller
-    /// inside the crate is [`crate::schema_sync::detect_typed_changes`],
-    /// which has to mint ids and queue ops by hand because the typed
-    /// schema layer doesn't know the structural-op flavor at compile
-    /// time. External callers should not bypass the structural API.
+    /// `add_node` / `add_edge` / `move_node` / etc.; the only callers
+    /// inside the crate are the `SchemaTarget` impls in
+    /// [`crate::schema_sync`], which mint ids and queue property ops for
+    /// the `kyoso_sync` component-sync pipeline. External callers should
+    /// not bypass the structural API.
     pub(crate) fn mint_id(&mut self) -> CrdtId {
         self.inner.mint_id()
     }

@@ -18,7 +18,7 @@
 //! additive on the enum.
 
 use bevy::prelude::*;
-use kyoso_graph_sync::SchemaSync;
+use kyoso_sync::SchemaSync;
 use serde::{Deserialize, Serialize};
 
 /// Schema-synced component: which board layer this circuit node lives

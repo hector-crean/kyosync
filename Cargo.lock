@@ -4170,36 +4170,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kyoso_comments_crdt"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "kyoso_crdt",
- "kyoso_graph_crdt",
- "postcard",
- "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "kyoso_comments_sync"
-version = "0.1.0"
-dependencies = [
- "axum",
- "bevy",
- "kyoso_comments_crdt",
- "kyoso_crdt",
- "kyoso_graph",
- "kyoso_graph_crdt",
- "kyoso_graph_sync",
- "kyoso_server",
- "kyoso_sync",
- "postcard",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "kyoso_crdt"
 version = "0.1.0"
 dependencies = [
@@ -4287,7 +4257,6 @@ dependencies = [
  "kyoso_polyline",
  "kyoso_server",
  "kyoso_sync",
- "kyoso_sync_derive",
  "postcard",
  "serde",
  "tokio",
@@ -4304,7 +4273,6 @@ dependencies = [
  "clap",
  "futures",
  "hdrhistogram",
- "kyoso_comments_crdt",
  "kyoso_crdt",
  "kyoso_graph_crdt",
  "kyoso_server",
@@ -4361,7 +4329,6 @@ dependencies = [
  "criterion",
  "dashmap",
  "futures",
- "kyoso_comments_crdt",
  "kyoso_crdt",
  "kyoso_graph_crdt",
  "postcard",

@@ -146,7 +146,7 @@ async fn two_clients_converge_on_typed_circuit_graph() {
         // kind-specific schemas (Resistor / Capacitor) AND the layer
         // assignments (OnLayer) have replicated to app B. Each of
         // those is a separate schema-sync path; failing any one
-        // means the corresponding `SchemaSyncedNodeComponentPlugin`
+        // means the corresponding `SchemaSyncedComponentPlugin`
         // path is broken.
         pump_pair_until(
             &mut app_a,

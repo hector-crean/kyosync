@@ -29,13 +29,25 @@
 //!     .run();
 //! ```
 
+pub mod builtin_schemas;
 pub mod client;
+pub mod component_sync;
+pub mod schema;
 pub mod sequence_diff;
 pub mod transport;
 
+pub use builtin_schemas::TransformSchema;
 pub use client::{ConnectError, Inbound, WsClient};
+pub use component_sync::{
+    HydratorFn, InboundProperty, SchemaDoc, SchemaHydrators, SchemaSyncedComponentPlugin,
+    SchemaTarget, SyncSet, TargetKind,
+};
+pub use schema::{SchemaField, SchemaMutations, SchemaSync};
 pub use sequence_diff::sequence_diff;
 pub use transport::{
     ClearLocalPresence, ModelRegistry, PeerIdGen, RawPresence, RawPresenceEvent,
     SetLocalPresence, SyncStatus, SyncTransportPlugin, WsBridge, WsInbound,
 };
+
+// Re-export the derive macro alongside the trait it implements.
+pub use kyoso_sync_derive::SchemaSync;

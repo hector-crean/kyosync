@@ -40,8 +40,8 @@ pub use config::Config;
 pub use error::{AppError, Result};
 pub use services::scheduler::{self, SchedulerConfig};
 pub use services::{
-    CommentsHandlerFactory, CommentsRoomHandler, GraphHandlerFactory, GraphRoomHandler,
-    HandlerFactory, OpStore, Room, RoomManager, RoomModelHandler,
+    GraphHandlerFactory, GraphRoomHandler, HandlerFactory, OpStore, Room, RoomManager,
+    RoomModelHandler,
 };
 
 #[derive(Clone)]
@@ -70,10 +70,7 @@ impl AppState {
     /// Build with a specific (typically Postgres) [`OpStore`] for the
     /// graph model + the in-memory comments handler.
     pub fn from_store(store: OpStore) -> Self {
-        Self::with_factories(vec![
-            Box::new(GraphHandlerFactory::new(store)),
-            Box::new(CommentsHandlerFactory::new()),
-        ])
+        Self::with_factories(vec![Box::new(GraphHandlerFactory::new(store))])
     }
 }
 

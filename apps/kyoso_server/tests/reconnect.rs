@@ -1,7 +1,7 @@
 //! Reconnect / catchup coverage. Layer 4b in the bench harness.
 //!
-//! What these test (none of which the existing `two_clients.rs` /
-//! `multi_model.rs` cover):
+//! What these test (none of which the existing `two_clients.rs`
+//! covers):
 //!
 //! - **Mid-traffic disconnect + reconnect**: peer drops, reconnects
 //!   with `since: N`, gets a Welcome whose `diff` carries every op
@@ -10,9 +10,6 @@
 //!   disconnected, the server takes a snapshot. The reconnecting
 //!   peer's Welcome must include `snapshot_payload = Some(...)` plus
 //!   the tail diff.
-//! - **Multi-model reconnect**: peer subscribes to graph + comments;
-//!   while away, ops land on both models; on reconnect both per-model
-//!   greetings carry the missed ops independently.
 //! - **Stress**: N peers cycle through random disconnect/reconnect
 //!   for a fixed duration; the final converged state matches across
 //!   every peer plus the server's mirror.
@@ -26,7 +23,6 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
-use kyoso_comments_crdt::{CommentOpKind, comments_model};
 use kyoso_crdt::{
     CrdtId, EnvelopeClientMsg, EnvelopeServerMsg, GlobalSeq, ModelGreeting, ModelId, PeerId, Tier,
 };
@@ -37,14 +33,12 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 type GraphOp = kyoso_crdt::Op<OpKind>;
 type GraphDiff = kyoso_crdt::Diff<OpKind>;
-type CommentOp = kyoso_crdt::Op<CommentOpKind>;
-type CommentDiff = kyoso_crdt::Diff<CommentOpKind>;
 
 type Ws =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 // ---------------------------------------------------------------------------
-// Test harness — same shape as two_clients.rs / multi_model.rs.
+// Test harness — same shape as two_clients.rs.
 // ---------------------------------------------------------------------------
 
 async fn spawn_server() -> (SocketAddr, AppState) {
@@ -97,44 +91,12 @@ async fn hello_graph(ws: &mut Ws, room: &str, since: GlobalSeq) {
     .await;
 }
 
-async fn hello_both(
-    ws: &mut Ws,
-    room: &str,
-    graph_since: GlobalSeq,
-    comments_since: GlobalSeq,
-) {
-    send_envelope(
-        ws,
-        EnvelopeClientMsg::Hello {
-            room: room.to_string(),
-            tier: Tier::ReadWrite,
-            models: vec![
-                (graph_model(), graph_since),
-                (comments_model(), comments_since),
-            ],
-        },
-    )
-    .await;
-}
-
 async fn submit_graph(ws: &mut Ws, op: &GraphOp) {
     let payload = postcard::to_allocvec(op).unwrap();
     send_envelope(
         ws,
         EnvelopeClientMsg::Submit {
             model: graph_model(),
-            payload,
-        },
-    )
-    .await;
-}
-
-async fn submit_comment(ws: &mut Ws, op: &CommentOp) {
-    let payload = postcard::to_allocvec(op).unwrap();
-    send_envelope(
-        ws,
-        EnvelopeClientMsg::Submit {
-            model: comments_model(),
             payload,
         },
     )
@@ -161,34 +123,6 @@ fn decode_graph_welcome(env: EnvelopeServerMsg) -> GraphWelcome {
         peer,
         snapshot,
         diff,
-    }
-}
-
-struct BothWelcome {
-    peer: PeerId,
-    graph_diff: GraphDiff,
-    graph_snapshot: Option<Snapshot>,
-    comments_diff: CommentDiff,
-}
-
-fn decode_both_welcome(env: EnvelopeServerMsg) -> BothWelcome {
-    let EnvelopeServerMsg::Welcome { peer, models, .. } = env else {
-        panic!("expected Welcome, got {env:?}");
-    };
-    let g = find_greeting(&models, &graph_model());
-    let c = find_greeting(&models, &comments_model());
-    let graph_snapshot = g
-        .snapshot_payload
-        .as_deref()
-        .map(|b| postcard::from_bytes::<Snapshot>(b).expect("decode snapshot"));
-    let graph_diff: GraphDiff = postcard::from_bytes(&g.diff_payload).expect("decode graph diff");
-    let comments_diff: CommentDiff =
-        postcard::from_bytes(&c.diff_payload).expect("decode comments diff");
-    BothWelcome {
-        peer,
-        graph_diff,
-        graph_snapshot,
-        comments_diff,
     }
 }
 
@@ -313,78 +247,6 @@ async fn reconnect_after_snapshot_includes_snapshot_in_welcome() {
     assert_eq!(late_w.diff.from_seq, 4);
     assert_eq!(late_w.diff.to_seq, 7);
     assert_eq!(late_w.diff.ops.len(), 3);
-}
-
-#[tokio::test]
-async fn multi_model_reconnect_each_model_catches_up_independently() {
-    let (addr, _state) = spawn_server().await;
-
-    let mut alice = connect(addr).await;
-    hello_both(&mut alice, "mm-rc", 0, 0).await;
-    let alice_w = decode_both_welcome(next_envelope(&mut alice).await);
-
-    let mut bob = connect(addr).await;
-    hello_both(&mut bob, "mm-rc", 0, 0).await;
-    let _bob_w = decode_both_welcome(next_envelope(&mut bob).await);
-
-    // Alice: 3 graph ops + 2 comment ops, drain bob's broadcasts.
-    for i in 0..3 {
-        let op = GraphOp::new(CrdtId::new(alice_w.peer, i), OpKind::AddNode);
-        submit_graph(&mut alice, &op).await;
-        let _ = next_apply_for(&mut alice, &graph_model()).await;
-        let _ = next_apply_for(&mut bob, &graph_model()).await;
-    }
-    for i in 3..5 {
-        let op = CommentOp::new(
-            CrdtId::new(alice_w.peer, i),
-            CommentOpKind::AddComment {
-                anchor: CrdtId::new(99, 42),
-                parent: None,
-                body: format!("c{i}"),
-            },
-        );
-        submit_comment(&mut alice, &op).await;
-        let _ = next_apply_for(&mut alice, &comments_model()).await;
-        let _ = next_apply_for(&mut bob, &comments_model()).await;
-    }
-
-    // Bob disconnects. Alice submits more on both models.
-    drop(bob);
-    for i in 5..8 {
-        let op = GraphOp::new(CrdtId::new(alice_w.peer, i), OpKind::AddNode);
-        submit_graph(&mut alice, &op).await;
-        let _ = next_apply_for(&mut alice, &graph_model()).await;
-    }
-    for i in 8..11 {
-        let op = CommentOp::new(
-            CrdtId::new(alice_w.peer, i),
-            CommentOpKind::AddComment {
-                anchor: CrdtId::new(99, 42),
-                parent: None,
-                body: format!("c{i}"),
-            },
-        );
-        submit_comment(&mut alice, &op).await;
-        let _ = next_apply_for(&mut alice, &comments_model()).await;
-    }
-
-    // Bob reconnects with per-model since cursors.
-    // Graph saw seqs 1..=3 → since=3. Comments saw seqs 1..=2 → since=2.
-    let mut bob = connect(addr).await;
-    hello_both(&mut bob, "mm-rc", 3, 2).await;
-    let bob_w = decode_both_welcome(next_envelope(&mut bob).await);
-
-    // Graph diff carries seqs 4..=6 (3 ops post-disconnect).
-    assert_eq!(bob_w.graph_diff.from_seq, 3);
-    assert_eq!(bob_w.graph_diff.to_seq, 6);
-    let graph_seqs: Vec<_> = bob_w.graph_diff.ops.iter().filter_map(|o| o.seq).collect();
-    assert_eq!(graph_seqs, vec![4, 5, 6]);
-
-    // Comments diff carries seqs 3..=5 (3 ops post-disconnect).
-    assert_eq!(bob_w.comments_diff.from_seq, 2);
-    assert_eq!(bob_w.comments_diff.to_seq, 5);
-    let comment_seqs: Vec<_> = bob_w.comments_diff.ops.iter().filter_map(|o| o.seq).collect();
-    assert_eq!(comment_seqs, vec![3, 4, 5]);
 }
 
 /// Reconnect-cycle stress: spawn N peers, each randomly disconnects

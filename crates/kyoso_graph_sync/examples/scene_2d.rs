@@ -8,7 +8,7 @@
 //!   (Add/Remove) flow through `GraphSyncPlugin`. Field sync is opt-in
 //!   per-component; this demo doesn't sync `radius`/`color_rgb`.
 //! - **`Transform`** is the spatial component. Replicated via
-//!   `SchemaSyncedNodeComponentPlugin::<_, _, Transform>` (typed path
+//!   `SchemaSyncedComponentPlugin::<NodeTarget, Transform>` (typed path
 //!   using `kyoso_sync::TransformSchema`) so peers see each other's
 //!   drag positions.
 //! - **`GraphEdge`** is the consumer's edge component. Edges carry their
@@ -39,7 +39,7 @@ use bevy::prelude::*;
 use kyoso_camera::controller::DefaultCameraSettings;
 use kyoso_drag::two_d::{DragTransform2dPlugin, Draggable2d};
 use kyoso_polyline::prelude::*;
-use kyoso_graph_sync::{GraphSyncPlugin, SchemaSyncedNodeComponentPlugin};
+use kyoso_graph_sync::{GraphSyncPlugin, NodeTarget, SchemaSyncedComponentPlugin};
 use kyoso_sync::SyncStatus;
 
 // ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ fn main() {
     app.add_plugins((
         DragTransform2dPlugin::<DefaultCameraSettings>(DefaultCameraSettings::default()),
         GraphSyncPlugin::<GraphNode, GraphEdge>::new(url, room),
-        SchemaSyncedNodeComponentPlugin::<GraphNode, GraphEdge, Transform>::default(),
+        SchemaSyncedComponentPlugin::<NodeTarget, Transform>::default(),
     ));
 
     app.add_systems(Startup, setup);

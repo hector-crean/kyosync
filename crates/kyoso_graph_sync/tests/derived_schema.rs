@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use bevy::prelude::*;
 use kyoso_graph::GraphManagerPlugin;
 use kyoso_server::{AppState, app};
-use kyoso_graph_sync::{GraphSyncPlugin, SchemaSync, SchemaSyncedNodeComponentPlugin};
+use kyoso_graph_sync::{GraphSyncPlugin, SchemaSync, NodeTarget, SchemaSyncedComponentPlugin};
 use kyoso_sync::SyncStatus;
 use tokio::net::TcpListener;
 
@@ -33,7 +33,7 @@ struct Derived {
 struct DerivedEdge;
 
 /// Second schema component for the multi-component late-join test —
-/// mirrors having multiple `SchemaSyncedNodeComponentPlugin`s on one
+/// mirrors having multiple `SchemaSyncedComponentPlugin`s on one
 /// entity (kyoso_client has Frame + Rectangle + Size + Transform + …).
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
@@ -59,7 +59,7 @@ fn build_app(server: SocketAddr, room: &str) -> App {
     app.add_plugins((
         GraphManagerPlugin::<Derived, DerivedEdge>::new(),
         GraphSyncPlugin::<Derived, DerivedEdge>::new(format!("ws://{server}/ws"), room),
-        SchemaSyncedNodeComponentPlugin::<Derived, DerivedEdge, Derived>::default(),
+        SchemaSyncedComponentPlugin::<NodeTarget, Derived>::default(),
     ));
     app
 }
@@ -69,8 +69,8 @@ fn build_app_multi(server: SocketAddr, room: &str) -> App {
     app.add_plugins((
         GraphManagerPlugin::<Derived, DerivedEdge>::new(),
         GraphSyncPlugin::<Derived, DerivedEdge>::new(format!("ws://{server}/ws"), room),
-        SchemaSyncedNodeComponentPlugin::<Derived, DerivedEdge, Derived>::default(),
-        SchemaSyncedNodeComponentPlugin::<Derived, DerivedEdge, DerivedTwo>::default(),
+        SchemaSyncedComponentPlugin::<NodeTarget, Derived>::default(),
+        SchemaSyncedComponentPlugin::<NodeTarget, DerivedTwo>::default(),
     ));
     app
 }
@@ -510,7 +510,7 @@ fn build_tagged_app(server: SocketAddr, room: &str) -> App {
     app.add_plugins((
         GraphManagerPlugin::<Tagged, DerivedEdge>::new(),
         GraphSyncPlugin::<Tagged, DerivedEdge>::new(format!("ws://{server}/ws"), room),
-        SchemaSyncedNodeComponentPlugin::<Tagged, DerivedEdge, Tagged>::default(),
+        SchemaSyncedComponentPlugin::<NodeTarget, Tagged>::default(),
     ));
     app
 }
@@ -577,7 +577,7 @@ fn build_counted_app(server: SocketAddr, room: &str) -> App {
     app.add_plugins((
         GraphManagerPlugin::<Counted, DerivedEdge>::new(),
         GraphSyncPlugin::<Counted, DerivedEdge>::new(format!("ws://{server}/ws"), room),
-        SchemaSyncedNodeComponentPlugin::<Counted, DerivedEdge, Counted>::default(),
+        SchemaSyncedComponentPlugin::<NodeTarget, Counted>::default(),
     ));
     app
 }
@@ -694,7 +694,7 @@ fn build_mapped_app(server: SocketAddr, room: &str) -> App {
     app.add_plugins((
         GraphManagerPlugin::<Mapped, DerivedEdge>::new(),
         GraphSyncPlugin::<Mapped, DerivedEdge>::new(format!("ws://{server}/ws"), room),
-        SchemaSyncedNodeComponentPlugin::<Mapped, DerivedEdge, Mapped>::default(),
+        SchemaSyncedComponentPlugin::<NodeTarget, Mapped>::default(),
     ));
     app
 }
@@ -799,7 +799,7 @@ fn build_outer_app(server: SocketAddr, room: &str) -> App {
     app.add_plugins((
         GraphManagerPlugin::<Outer, DerivedEdge>::new(),
         GraphSyncPlugin::<Outer, DerivedEdge>::new(format!("ws://{server}/ws"), room),
-        SchemaSyncedNodeComponentPlugin::<Outer, DerivedEdge, Outer>::default(),
+        SchemaSyncedComponentPlugin::<NodeTarget, Outer>::default(),
     ));
     app
 }
@@ -889,7 +889,7 @@ fn build_text_app(server: SocketAddr, room: &str) -> App {
     app.add_plugins((
         GraphManagerPlugin::<TextDoc, DerivedEdge>::new(),
         GraphSyncPlugin::<TextDoc, DerivedEdge>::new(format!("ws://{server}/ws"), room),
-        SchemaSyncedNodeComponentPlugin::<TextDoc, DerivedEdge, TextDoc>::default(),
+        SchemaSyncedComponentPlugin::<NodeTarget, TextDoc>::default(),
     ));
     app
 }
@@ -948,7 +948,7 @@ fn build_ordered_list_app(server: SocketAddr, room: &str) -> App {
     app.add_plugins((
         GraphManagerPlugin::<OrderedList, DerivedEdge>::new(),
         GraphSyncPlugin::<OrderedList, DerivedEdge>::new(format!("ws://{server}/ws"), room),
-        SchemaSyncedNodeComponentPlugin::<OrderedList, DerivedEdge, OrderedList>::default(),
+        SchemaSyncedComponentPlugin::<NodeTarget, OrderedList>::default(),
     ));
     app
 }
@@ -1019,7 +1019,7 @@ fn build_with_builtin_app(server: SocketAddr, room: &str) -> App {
     app.add_plugins((
         GraphManagerPlugin::<WithBuiltin, DerivedEdge>::new(),
         GraphSyncPlugin::<WithBuiltin, DerivedEdge>::new(format!("ws://{server}/ws"), room),
-        SchemaSyncedNodeComponentPlugin::<WithBuiltin, DerivedEdge, WithBuiltin>::default(),
+        SchemaSyncedComponentPlugin::<NodeTarget, WithBuiltin>::default(),
     ));
     app
 }
@@ -1210,7 +1210,7 @@ mod custom_with {
         app.add_plugins((
             GraphManagerPlugin::<Container, DerivedEdge>::new(),
             GraphSyncPlugin::<Container, DerivedEdge>::new(format!("ws://{server}/ws"), room),
-            SchemaSyncedNodeComponentPlugin::<Container, DerivedEdge, Container>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Container>::default(),
         ));
         app
     }
@@ -1341,9 +1341,9 @@ mod compaction_recovery {
 //      plugin's `project_snapshot` spawns the structural marker
 //      (`CircuitNode`) for each replicated node. Bevy auto-inserts
 //      the marker's `#[require(...)]` components — `Transform`, etc. —
-//      at `Default::default()` BEFORE `project_typed_to_bevy` has a
+//      at `Default::default()` BEFORE `project_to_components` has a
 //      chance to write the hydrated values back from `SchemaDoc`.
-//   3. `detect_typed_changes` runs after `ensure_schema_slots`, sees
+//   3. `detect_local_changes` runs after `ensure_schema_slots`, sees
 //      `Changed<C>` for every just-inserted component, diffs the local
 //      default against the hydrated doc state, and emits
 //      `SetNodeProperty(<default>)` ops — one per node, per
@@ -1354,14 +1354,14 @@ mod compaction_recovery {
 //
 // This test reproduces the path minimally: a marker component with
 // `#[require(Counted)]` so Bevy auto-inserts `Counted::default()`
-// during `project_snapshot`'s spawn. With the fix, `detect_typed_changes`
+// during `project_snapshot`'s spawn. With the fix, `detect_local_changes`
 // suppresses the first-frame Added emission whenever the doc already
 // holds non-default state (i.e. it was just hydrated from a snapshot).
 mod reconnect_clobber {
     use super::{build_counted_app, pump_until, sync_status, Counted};
     use bevy::prelude::*;
     use kyoso_graph::GraphManagerPlugin;
-    use kyoso_graph_sync::{GraphSyncPlugin, SchemaSyncedNodeComponentPlugin};
+    use kyoso_graph_sync::{GraphSyncPlugin, NodeTarget, SchemaSyncedComponentPlugin};
     use kyoso_server::{AppState, app};
     use std::net::SocketAddr;
     use std::sync::Arc;
@@ -1390,7 +1390,7 @@ mod reconnect_clobber {
                 format!("ws://{server}/ws"),
                 room,
             ),
-            SchemaSyncedNodeComponentPlugin::<AutoRequiringMarker, MarkerEdge, Counted>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Counted>::default(),
         ));
         app
     }
@@ -1498,8 +1498,8 @@ mod reconnect_clobber {
             assert_eq!(
                 a_edits, 7,
                 "A's Counted{{edits}} was clobbered by B's snapshot-join — \
-                 detect_typed_changes emitted Dec on the auto-required \
-                 default component before project_typed_to_bevy could \
+                 detect_local_changes emitted Dec on the auto-required \
+                 default component before project_to_components could \
                  write the hydrated value back."
             );
 

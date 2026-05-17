@@ -28,8 +28,6 @@ kyoso_crdt = { path = "crates/kyoso_crdt" }
 kyoso_crdt_derive = { path = "crates/kyoso_crdt_derive" }
 kyoso_graph_crdt = { path = "crates/kyoso_graph_crdt" }
 kyoso_graph_sync = { path = "crates/kyoso_graph_sync" }
-kyoso_comments_crdt = { path = "crates/kyoso_comments_crdt" }
-kyoso_comments_sync = { path = "crates/kyoso_comments_sync" }
 kyoso_loadgen = { path = "crates/kyoso_loadgen" }
 kyoso_server = { path = "apps/kyoso_server" }
 kyoso_sync = { path = "crates/kyoso_sync" }

@@ -32,7 +32,7 @@
 //! to find the right `Document<TypeStyleSchema>` instance.
 
 use bevy::prelude::*;
-use kyoso_graph_sync::{GraphSyncPlugin, SchemaSyncedNodeComponentPlugin};
+use kyoso_graph_sync::{GraphSyncPlugin, NodeTarget, SchemaSyncedComponentPlugin};
 use kyoso_sync::SyncTransportPlugin;
 
 use crate::{Frame, Rectangle, Size, Text, TypeStyle};
@@ -53,14 +53,14 @@ impl Plugin for KyosoFigmaPlugin {
             SyncTransportPlugin::new(self.server_url.clone(), self.room.clone()),
             GraphSyncPlugin::<FigmaNode, FigmaEdge>::default(),
             // Field-bearing components.
-            SchemaSyncedNodeComponentPlugin::<FigmaNode, FigmaEdge, Frame>::default(),
-            SchemaSyncedNodeComponentPlugin::<FigmaNode, FigmaEdge, Rectangle>::default(),
-            SchemaSyncedNodeComponentPlugin::<FigmaNode, FigmaEdge, Text>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Frame>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Rectangle>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Text>::default(),
             // Satellite components shared across node kinds.
-            SchemaSyncedNodeComponentPlugin::<FigmaNode, FigmaEdge, Size>::default(),
-            SchemaSyncedNodeComponentPlugin::<FigmaNode, FigmaEdge, Transform>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Size>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Transform>::default(),
             // Nested-only — see module docstring.
-            SchemaSyncedNodeComponentPlugin::<FigmaNode, FigmaEdge, TypeStyle>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, TypeStyle>::default(),
         ));
     }
 }

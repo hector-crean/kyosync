@@ -37,7 +37,7 @@
 //!
 //! Per-field CRDT kind drives only the *schema-side type*; the
 //! `diff` / `write_back` bodies are uniform — one delegation
-//! to that type's [`kyoso_graph_sync::SchemaField`] impl per field. The
+//! to that type's [`kyoso_sync::SchemaField`] impl per field. The
 //! per-kind diff/projection logic lives in those impls, not here.
 //!
 //! | Field attr | Schema-side type | `SchemaField` impl behaviour |
@@ -47,7 +47,7 @@
 //! | `#[crdt(counter)]` | `PnCounter` (component is an integer) | `Inc`/`Dec` by the signed diff |
 //! | `#[crdt(map)]` | `CausalMap<LwwRegister<V>>` (component is `HashMap<String, V>`) | per-key `Apply` for changed values, `Remove` for absent keys |
 //! | `#[crdt(nested)]` | `<T as SchemaSync>::Schema` | delegate to the inner type's own `diff` |
-//! | `#[crdt(with = "Type")]` | the named `Type` (must impl [`kyoso_graph_sync::SchemaField`]) | delegate to `Type`'s `SchemaField` impl |
+//! | `#[crdt(with = "Type")]` | the named `Type` (must impl [`kyoso_sync::SchemaField`]) | delegate to `Type`'s `SchemaField` impl |
 //! | `#[crdt(sequence)]` | `Sequence<char>` (component is `String`) or `Sequence<T>` (component is `Vec<T>`) | prefix-suffix diff via `kyoso_sync::sequence_diff` |
 //!
 //! See plan doc Part IX §IX.3 for the full default-CRDT-type rules.
@@ -207,7 +207,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 // schema struct is the schema-side type. `derive(SchemaSync)`
                 // emits `impl SchemaField<T> for <T as SchemaSync>::Schema`,
                 // so the delegation below resolves like any other field.
-                quote! { <#ty as ::kyoso_graph_sync::SchemaSync>::Schema }
+                quote! { <#ty as ::kyoso_sync::SchemaSync>::Schema }
             }
             FieldCrdtKind::Sequence => {
                 // `String` → `Sequence<char>`; `Vec<T>` → `Sequence<T>`.
@@ -219,7 +219,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
             FieldCrdtKind::With(with_ty) => {
                 // User-named schema type. Must impl
-                // `kyoso_graph_sync::SchemaField<#ty>`. A `Component`
+                // `kyoso_sync::SchemaField<#ty>`. A `Component`
                 // mismatch surfaces as a compile-time type error at the
                 // delegation call sites below.
                 quote! { #with_ty }
@@ -234,7 +234,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         // ignored by additive CRDTs.
         changes_arms.push(quote! {
             out.extend(
-                <#schema_field_ty as ::kyoso_graph_sync::SchemaField<#ty>>::diff(
+                <#schema_field_ty as ::kyoso_sync::SchemaField<#ty>>::diff(
                     &doc.#field_schema_ident,
                     &self.#component_ident,
                     &#default_expr,
@@ -245,7 +245,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         });
         // Inbound: project the doc-side state back onto the component.
         write_back_arms.push(quote! {
-            <#schema_field_ty as ::kyoso_graph_sync::SchemaField<#ty>>::project_to(
+            <#schema_field_ty as ::kyoso_sync::SchemaField<#ty>>::project_to(
                 &schema.#field_schema_ident,
                 &mut self.#component_ident,
             );
@@ -264,14 +264,14 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             #( #schema_struct_fields )*
         }
 
-        impl ::kyoso_graph_sync::SchemaSync for #component_ident {
+        impl ::kyoso_sync::SchemaSync for #component_ident {
             type Schema = #schema_ident;
             const SCHEMA_NAME: &'static str = #schema_name;
 
             fn diff(
                 &self,
                 doc: &Self::Schema,
-            ) -> ::kyoso_graph_sync::SchemaMutations<Self> {
+            ) -> ::kyoso_sync::SchemaMutations<Self> {
                 // `default` is referenced by each field's echo-guard
                 // baseline (`&default.<field>`). May be unused if every
                 // field carries an explicit `#[crdt(default = ...)]`.
@@ -290,19 +290,19 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         // Lets `#component_ident` be embedded as a `#[crdt(nested)]` field
         // of another `SchemaSync` component: the parent delegates through
         // `SchemaField` exactly as it does for primitive CRDT fields.
-        impl ::kyoso_graph_sync::SchemaField<#component_ident> for #schema_ident {
+        impl ::kyoso_sync::SchemaField<#component_ident> for #schema_ident {
             fn diff(
                 &self,
                 component: &#component_ident,
                 _baseline: &#component_ident,
             ) -> ::std::vec::Vec<<Self as ::kyoso_crdt::Crdt>::Mutation> {
-                <#component_ident as ::kyoso_graph_sync::SchemaSync>::diff(
+                <#component_ident as ::kyoso_sync::SchemaSync>::diff(
                     component, self,
                 )
             }
 
             fn project_to(&self, component: &mut #component_ident) {
-                <#component_ident as ::kyoso_graph_sync::SchemaSync>::write_back(
+                <#component_ident as ::kyoso_sync::SchemaSync>::write_back(
                     component, self,
                 );
             }
@@ -330,7 +330,7 @@ enum FieldCrdtKind {
     Sequence,
     /// `#[crdt(with = "Type")]` — schema-side type is the user-named
     /// `Type`, which must implement
-    /// [`kyoso_graph_sync::SchemaField`] over the component field type.
+    /// [`kyoso_sync::SchemaField`] over the component field type.
     With(Type),
 }
 

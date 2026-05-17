@@ -28,12 +28,14 @@ use kyoso_graph::components::{EdgeFrom, EdgeTo, IncomingEdges};
 use kyoso_graph::queries::GraphComponent;
 use kyoso_graph::tree::{OrderKey, TreeEdge, TreeParent};
 use kyoso_graph_crdt::{GraphTopologySnapshot, OpKind, graph_model};
-use kyoso_sync::{ModelRegistry, PeerIdGen, SyncStatus, WsBridge, WsInbound};
+use kyoso_sync::{
+    ModelRegistry, PeerIdGen, SchemaHydrators, SyncSet, SyncStatus, TargetKind, WsBridge,
+    WsInbound,
+};
 
 use crate::category::ApplyEdgeCategory;
 use crate::engine::{ClientSyncEngine, EngineSnapshot, ServerSnapshot};
 use crate::index::EntityCrdtIndex;
-use crate::schema_sync::{SchemaHydrators, TargetKind};
 
 type GraphOp = Op<OpKind>;
 
@@ -53,7 +55,7 @@ impl<T> Syncable for T where
 
 /// Emitted once per server-confirmed graph op as soon as the engine has
 /// applied it. Typed plugins
-/// ([`crate::SchemaSyncedNodeComponentPlugin`],
+/// ([`crate::SchemaSyncedComponentPlugin`],
 /// [`crate::SyncedEdgeCategoryPlugin`] projection) subscribe to this
 /// stream to route ops to per-schema [`crate::SchemaDoc<S>`] instances
 /// after the engine's canonical apply has run.
@@ -151,6 +153,14 @@ where
         app.add_message::<RemoteOpApplied>();
         app.init_resource::<GraphLastAck>();
 
+        // Place the graph's structural detection and outbound drain into
+        // the shared `kyoso_sync::SyncSet` phases. `SchemaSyncedComponentPlugin`
+        // schedules itself strictly between them, so the typed-schema
+        // pipeline stays free of graph type parameters.
+        app.configure_sets(
+            Update,
+            (SyncSet::Structural, SyncSet::Outbound).chain(),
+        );
         app.add_systems(
             Update,
             (
@@ -160,9 +170,13 @@ where
                 detect_tree_moves::<N, E>,
                 detect_removed_nodes::<N, E>,
                 detect_removed_edges::<N, E>,
-                outbound_system::<N, E>,
             )
-                .chain(),
+                .chain()
+                .in_set(SyncSet::Structural),
+        );
+        app.add_systems(
+            Update,
+            outbound_system::<N, E>.in_set(SyncSet::Outbound),
         );
     }
 }
@@ -518,7 +532,7 @@ fn hydrate_typed_schemas(
     typed_state: std::collections::BTreeMap<kyoso_crdt::CrdtId, OpaqueRecord>,
 ) {
     let hydrators = match world.get_resource::<SchemaHydrators>() {
-        Some(h) if !h.by_key.is_empty() => h.by_key.clone(),
+        Some(h) if !h.is_empty() => h.all(),
         _ => return,
     };
     // Snapshot the index keys for classification — release the borrow

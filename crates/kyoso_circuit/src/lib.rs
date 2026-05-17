@@ -21,7 +21,7 @@
 //!   agree on them.
 //! - **`KyosoCircuitPlugin`** — single-call entry that registers the
 //!   `SyncTransportPlugin`, `GraphSyncPlugin<CircuitNode, CircuitEdge>`,
-//!   and one `SchemaSyncedNodeComponentPlugin` per component type.
+//!   and one `SchemaSyncedComponentPlugin` per component type.
 //!
 //! The sibling `kyoso_figma` crate is the design-tool counterpart;
 //! kyoso_circuit is its analogue for schematic capture.

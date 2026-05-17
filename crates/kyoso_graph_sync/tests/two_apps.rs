@@ -15,7 +15,7 @@ use kyoso_graph::tree::{OrderKey, TreeEdge, TreePlugin};
 use kyoso_graph::{GraphCommand, GraphManagerPlugin, GraphMessage};
 use kyoso_graph_sync::{ClientSyncEngine, EntityCrdtIndex};
 use kyoso_server::{AppState, app};
-use kyoso_graph_sync::{GraphSyncPlugin, SchemaSync, SchemaSyncedNodeComponentPlugin};
+use kyoso_graph_sync::{GraphSyncPlugin, SchemaSync, NodeTarget, SchemaSyncedComponentPlugin};
 use kyoso_sync::SyncStatus;
 use tokio::net::TcpListener;
 
@@ -315,7 +315,7 @@ fn build_named_app(server: SocketAddr, room: &str) -> App {
         // Field sync is opt-in per component: `Named` rides the typed
         // schema path; `EdgeMeta` carries no synced fields so we don't
         // register it.
-        SchemaSyncedNodeComponentPlugin::<Named, EdgeMeta, Named>::default(),
+        SchemaSyncedComponentPlugin::<NodeTarget, Named>::default(),
     ));
     app
 }
@@ -568,7 +568,7 @@ async fn extra_node_component_syncs_transform() {
             let mut app = App::new();
             app.add_plugins((
                 GraphSyncPlugin::<N, E>::new(format!("ws://{addr}/ws"), room),
-                SchemaSyncedNodeComponentPlugin::<N, E, Transform>::default(),
+                SchemaSyncedComponentPlugin::<NodeTarget, Transform>::default(),
             ));
             app
         };
@@ -631,13 +631,13 @@ async fn per_property_lww_no_loss() {
         a.add_plugins((
             GraphManagerPlugin::<Styled, EdgeMeta>::new(),
             GraphSyncPlugin::<Styled, EdgeMeta>::new(format!("ws://{addr}/ws"), "lww-room"),
-            SchemaSyncedNodeComponentPlugin::<Styled, EdgeMeta, Styled>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Styled>::default(),
         ));
         let mut b = App::new();
         b.add_plugins((
             GraphManagerPlugin::<Styled, EdgeMeta>::new(),
             GraphSyncPlugin::<Styled, EdgeMeta>::new(format!("ws://{addr}/ws"), "lww-room"),
-            SchemaSyncedNodeComponentPlugin::<Styled, EdgeMeta, Styled>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, Styled>::default(),
         ));
 
         pump_until(
@@ -982,12 +982,12 @@ async fn per_category_edges_replicate_with_correct_markers() {
 }
 
 // ---------------------------------------------------------------------------
-// Typed-schema sync (SchemaSync + SchemaSyncedNodeComponentPlugin)
+// Typed-schema sync (SchemaSync + SchemaSyncedComponentPlugin)
 // ---------------------------------------------------------------------------
 
 mod typed_schema {
     use super::*;
-    use kyoso_graph_sync::{SchemaSync, SchemaSyncedNodeComponentPlugin};
+    use kyoso_graph_sync::{SchemaSync, NodeTarget, SchemaSyncedComponentPlugin};
 
     /// Bevy component being typed-synced. After Phase H, the parallel
     /// schema struct + `SchemaSync` impl come from `derive(SchemaSync)`.
@@ -1006,7 +1006,7 @@ mod typed_schema {
         let mut app = App::new();
         app.add_plugins((
             GraphSyncPlugin::<TypedNode, E>::new(format!("ws://{server}/ws"), room),
-            SchemaSyncedNodeComponentPlugin::<TypedNode, E, TypedNode>::default(),
+            SchemaSyncedComponentPlugin::<NodeTarget, TypedNode>::default(),
         ));
         app
     }

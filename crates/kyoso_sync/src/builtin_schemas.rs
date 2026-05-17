@@ -3,12 +3,16 @@
 //! Currently included:
 //! - [`TransformSchema`] — LWW per `translation` / `rotation` / `scale`,
 //!   plumbed for [`bevy::prelude::Transform`].
+//!
+//! These live here (not in a per-model crate) because `SchemaSync` is
+//! the local trait — the orphan rule lets only this crate implement it
+//! for a foreign type like [`bevy::prelude::Transform`].
 
 use bevy::prelude::{Quat, Transform, Vec3};
 use kyoso_crdt::DeriveCrdt;
 use kyoso_crdt::types::LwwRegister;
 
-use crate::schema_sync::{SchemaField, SchemaMutations, SchemaSync};
+use crate::{SchemaField, SchemaMutations, SchemaSync};
 
 /// Typed schema mirroring [`bevy::prelude::Transform`].
 #[derive(Clone, Debug, Default, PartialEq, DeriveCrdt)]

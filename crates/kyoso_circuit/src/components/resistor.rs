@@ -9,7 +9,7 @@
 //! supplies the sensible preset (1 kΩ) on spawn.
 
 use bevy::prelude::*;
-use kyoso_graph_sync::SchemaSync;
+use kyoso_sync::SchemaSync;
 
 #[derive(Component, Default, Clone, Debug, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]

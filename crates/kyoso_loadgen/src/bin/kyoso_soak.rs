@@ -38,7 +38,7 @@ struct Args {
     /// Per-client target rate (ops/s).
     #[arg(long, default_value_t = 50)]
     rate: u32,
-    /// Workload: `graph`, `comments`, `mixed`.
+    /// Workload: `graph`.
     #[arg(long, default_value = "graph")]
     model: String,
     /// Room name (clients share the same room across intervals so
@@ -82,10 +82,8 @@ async fn main() {
     let args = Args::parse();
     let model = match args.model.as_str() {
         "graph" => LoadModel::Graph,
-        "comments" => LoadModel::Comments,
-        "mixed" => LoadModel::Mixed,
         other => {
-            eprintln!("unknown --model `{other}` (use graph | comments | mixed)");
+            eprintln!("unknown --model `{other}` (use graph)");
             std::process::exit(2);
         }
     };

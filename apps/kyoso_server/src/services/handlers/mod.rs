@@ -5,8 +5,6 @@
 //! pattern: implement `RoomModelHandler` for the per-room state,
 //! `HandlerFactory` for the startup-time constructor.
 
-pub mod comments;
 pub mod graph;
 
-pub use comments::{CommentsHandlerFactory, CommentsRoomHandler};
 pub use graph::{GraphHandlerFactory, GraphRoomHandler};

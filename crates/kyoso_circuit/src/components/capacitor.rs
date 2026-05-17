@@ -3,7 +3,7 @@
 //! supplies a 1 µF preset on spawn.
 
 use bevy::prelude::*;
-use kyoso_graph_sync::SchemaSync;
+use kyoso_sync::SchemaSync;
 
 #[derive(Component, Default, Clone, Debug, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
