@@ -44,6 +44,12 @@ Each impl provides `Crdt` + `Lattice` + `SchemaApply` + `From<TypedDelta> for Wi
 
 
 
+Intermediate representation
+
+
+
+
+
 
 
 

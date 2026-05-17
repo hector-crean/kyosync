@@ -3,7 +3,7 @@
 > **Status:** current. This document describes what is actually wired in
 > the workspace today (post-refactor architecture as of commit `0acc1e8`).
 > For the research/landscape (Fugue, Eg-walker, Loro, Yjs, P2P vs.
-> server-mediated) and the original phased plan, see [`crdt.md`](crdt.md).
+> server-mediated) and the original phased plan, see [`crdt.md`](system-design/crdt.md).
 > For how the client app's external message bus sits *alongside* the CRDT
 > sync layer, see [`event_bus.md`](event_bus.md). **If you're seeing
 > references to `CrdtSyncPlugin` or "Phase X" and wondering what's legacy**,
@@ -45,13 +45,13 @@ keep CRDT semantics simple and `apply` idempotent.
 
 **vs Yjs**: Yjs uses P2P with vector clocks and yjsmod sequence CRDT; kyoso uses server-mediated total order with modular CRDT primitives. Choose Yjs for P2P networks where no central authority exists; kyoso for Figma-shaped collaborative editors with central coordination.
 
-**vs Automerge**: Automerge preserves full history enabling fork/merge and time-travel; kyoso compacts aggressively for steady-state efficiency. kyoso's CrdtId-as-stable-id design keeps branching possible as future work without rewriting the core — see [`crdt.md §2.5`](crdt.md#25-branches--reconciliation-automerge-flavored) for the deferred branching strategy.
+**vs Automerge**: Automerge preserves full history enabling fork/merge and time-travel; kyoso compacts aggressively for steady-state efficiency. kyoso's CrdtId-as-stable-id design keeps branching possible as future work without rewriting the core — see [`crdt.md §2.5`](system-design/crdt.md#25-branches--reconciliation-automerge-flavored) for the deferred branching strategy.
 
 **vs Loro**: Both use Kleppmann movable trees + fractional indices for sibling order. Loro integrates Fugue for rich text; kyoso currently uses LWW strings (Fugue deferred per §10). Composition strategies align: both use lattice-based `Map<K, CRDT>` for nested properties.
 
 **vs Operational Transformation (OT)**: CRDTs provide deterministic merge without transform functions; OT requires a central authority to serialize operations. Google Docs uses OT with massive infrastructure; kyoso's CRDT model is simpler to deploy and reason about at smaller scale, with the trade-off of round-trip latency for visibility.
 
-For deeper background on the CRDT landscape — Fugue/Eg-walker text algorithms, tree CRDTs, graph replication policies, and composition — see [`crdt.md §2`](crdt.md#2--state-of-the-art-landscape-papers-libraries-what-changed-recently).
+For deeper background on the CRDT landscape — Fugue/Eg-walker text algorithms, tree CRDTs, graph replication policies, and composition — see [`crdt.md §2`](system-design/crdt.md#2--state-of-the-art-landscape-papers-libraries-what-changed-recently).
 
 ## 1.6 · Key operation sequences
 
@@ -1130,7 +1130,7 @@ Op-based is ~30,000× more bandwidth-efficient for low-churn documents. State-ba
 
 ## 10 · Known gaps & deferred decisions
 
-Items here are *acknowledged* gaps or deliberate simplifications. Each lists **why deferred**, **cost of deferral**, and a **migration sketch**. For deeper research background, see [`crdt.md`](crdt.md) at the linked sections.
+Items here are *acknowledged* gaps or deliberate simplifications. Each lists **why deferred**, **cost of deferral**, and a **migration sketch**. For deeper research background, see [`crdt.md`](system-design/crdt.md) at the linked sections.
 
 ### No auto-reconnect, no offline op buffer
 

@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ECS ↔ CRDT sync — kyoso</title>
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" />
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1c2330;
+    --border: #2a3441;
+    --text: #d8e0eb;
+    --muted: #8a96a8;
+    --accent: #7ab7ff;
+    --accent-2: #b78cff;
+    --warn: #ffb86b;
+    --good: #6fd49a;
+    --bad: #ff7a7a;
+    --kbd: #2a3441;
+    --code-bg: #1a1f29;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.65;
+  }
+
+  body {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 48px 32px 96px;
+  }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 28px;
+    margin-bottom: 40px;
+  }
+
+  header .eyebrow {
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin: 0 0 8px;
+  }
+
+  h1 {
+    font-size: 38px;
+    line-height: 1.15;
+    margin: 0 0 16px;
+    letter-spacing: -0.01em;
+    font-weight: 700;
+  }
+
+  h1 .accent { color: var(--accent); }
+  h1 .accent-2 { color: var(--accent-2); }
+
+  header .lede {
+    color: var(--muted);
+    font-size: 17px;
+    max-width: 78ch;
+    margin: 0;
+  }
+
+  h2 {
+    font-size: 26px;
+    margin: 72px 0 16px;
+    letter-spacing: -0.005em;
+    border-left: 3px solid var(--accent);
+    padding-left: 14px;
+  }
+
+  h3 {
+    font-size: 19px;
+    margin: 32px 0 12px;
+    color: var(--text);
+  }
+
+  h3 .num {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 14px;
+    margin-right: 8px;
+  }
+
+  p { margin: 0 0 14px; }
+
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(122,183,255,0.25); }
+  a:hover { border-bottom-color: var(--accent); }
+
+  code {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: #e8eef7;
+    border: 1px solid var(--border);
+  }
+
+  pre[class*="language-"] {
+    background: var(--code-bg) !important;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px !important;
+    font-size: 13px;
+    margin: 12px 0;
+    overflow-x: auto;
+  }
+
+  pre code { background: transparent; border: none; padding: 0; font-size: inherit; }
+
+  .file-tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    letter-spacing: 0.03em;
+  }
+
+  .file-tag .ln { color: var(--accent); }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin: 18px 0;
+  }
+  @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .panel h4 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-family: var(--mono);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  .panel.bevy h4 { color: var(--accent); }
+  .panel.crdt h4 { color: var(--accent-2); }
+
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .pill.lww { color: #ffd28a; border-color: rgba(255, 210, 138, 0.4); }
+  .pill.seq { color: #98d4ff; border-color: rgba(152, 212, 255, 0.4); }
+  .pill.nested { color: #c4a8ff; border-color: rgba(196, 168, 255, 0.4); }
+  .pill.orset { color: #9fe6b8; border-color: rgba(159, 230, 184, 0.4); }
+  .pill.counter { color: #ffaca8; border-color: rgba(255, 172, 168, 0.4); }
+  .pill.map { color: #a4d5ff; border-color: rgba(164, 213, 255, 0.4); }
+  .pill.with { color: #d8d8d8; border-color: rgba(216, 216, 216, 0.4); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    color: var(--muted);
+    font-weight: 500;
+    font-family: var(--mono);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+
+  .mermaid {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin: 18px 0;
+    text-align: center;
+  }
+
+  .note {
+    border-left: 3px solid var(--accent);
+    background: rgba(122, 183, 255, 0.06);
+    padding: 14px 18px;
+    margin: 18px 0;
+    border-radius: 0 8px 8px 0;
+    font-size: 14px;
+  }
+  .note.warn {
+    border-left-color: var(--warn);
+    background: rgba(255, 184, 107, 0.06);
+  }
+  .note .label {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .note.warn .label { color: var(--warn); }
+
+  .flow-step {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    margin: 14px 0;
+  }
+  .flow-step .step-num {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    margin-top: 2px;
+  }
+  .flow-step .step-body { flex: 1; min-width: 0; }
+  .flow-step .step-body p { margin: 0 0 8px; }
+
+  .arrow-row {
+    display: grid;
+    grid-template-columns: 1fr 36px 1fr;
+    gap: 12px;
+    align-items: center;
+    margin: 24px 0;
+  }
+  .arrow {
+    text-align: center;
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 24px;
+  }
+  .arrow.left { color: var(--accent-2); }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 12px 0 18px;
+  }
+
+  .toc {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 40px;
+  }
+  .toc h4 {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--muted);
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc li { margin: 4px 0; }
+  .toc a { border-bottom: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .kbd {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 2px 7px;
+    background: var(--kbd);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+
+  .path {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: rgba(122,183,255,0.08);
+    border: 1px solid rgba(122,183,255,0.3);
+    padding: 2px 8px;
+    border-radius: 4px;
+    color: #b3d4ff;
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 56px 0;
+  }
+
+  footer {
+    color: var(--muted);
+    font-size: 13px;
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+    margin-top: 56px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="eyebrow">kyoso · system design</p>
+  <h1>The <span class="accent">ECS</span> ↔ <span class="accent-2">CRDT</span> seam</h1>
+  <p class="lede">
+    How <code>#[derive(SchemaSync)]</code> pairs a Bevy component with a generated
+    CRDT schema, and how a four-system chain shuttles state between the two
+    every frame. A visual companion to <code>ecs-crdt-sync.md</code>.
+  </p>
+</header>
+
+<nav class="toc">
+  <h4>Contents</h4>
+  <ol>
+    <li><a href="#mental-model">The mental model — two parallel stores</a></li>
+    <li><a href="#derive">What <code>#[derive(SchemaSync)]</code> generates</a></li>
+    <li><a href="#field-kinds">Per-field CRDT-kind table</a></li>
+    <li><a href="#pipeline">The four-phase pipeline</a></li>
+    <li><a href="#outbound">Outbound flow — Bevy edit → wire op</a></li>
+    <li><a href="#inbound">Inbound flow — wire op → Bevy projection</a></li>
+    <li><a href="#worked">Worked example — <code>Text</code></a></li>
+    <li><a href="#guard">The reconnect-clobber guard</a></li>
+    <li><a href="#hydration">Late-join hydration</a></li>
+  </ol>
+</nav>
+
+<!-- ============================================================ -->
+<section id="mental-model">
+<h2>1 · The mental model — two parallel stores</h2>
+
+<p>
+  A peer holds <strong>two</strong> state stores for every replicated entity, kept in
+  sync by a per-frame pipeline. The CRDT is the source of truth; the ECS is a
+  projection onto it.
+</p>
+
+<div class="mermaid">
+flowchart LR
+  subgraph Bevy["Bevy ECS world (projection)"]
+    direction TB
+    E1["Entity #42<br/>Text { content, style, fills }<br/>Transform, GlobalTransform"]
+  end
+  subgraph CRDT["CRDT store (canonical)"]
+    direction TB
+    D1["SchemaDoc&lt;TextSchema&gt;<br/>id 7 → TextSchema { … }"]
+    D2["SchemaDoc&lt;TypeStyleSchema&gt;<br/>id 7 → TypeStyleSchema { … }"]
+    D3["ClientSyncEngine<br/>(topology only)"]
+  end
+  IDX["EntityCrdtIndex<br/>Entity ↔ CrdtId"]
+
+  Bevy -- "Changed&lt;Text&gt;" --> IDX
+  IDX -.-> CRDT
+  CRDT -- "doc.is_changed()" --> IDX
+  IDX -.-> Bevy
+
+  classDef bevy fill:#1c2a3a,stroke:#7ab7ff,color:#d8e0eb;
+  classDef crdt fill:#2a1c3a,stroke:#b78cff,color:#d8e0eb;
+  classDef idx fill:#1a2530,stroke:#8a96a8,color:#d8e0eb;
+  class E1 bevy
+  class D1,D2,D3 crdt
+  class IDX idx
+</div>
+
+<table>
+  <thead>
+    <tr><th>Store</th><th>Holds</th><th>Where it lives</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>ClientSyncEngine</code></td>
+      <td>Topology — nodes, edges, tree parents, tombstones. No field-level state.</td>
+      <td><code>kyoso_graph_sync/src/engine.rs</code></td>
+    </tr>
+    <tr>
+      <td><code>SchemaDoc&lt;C::Schema&gt;</code></td>
+      <td>Per-<code>CrdtId</code> typed CRDT state for one component type. One resource per registered <code>C</code>.</td>
+      <td><code>kyoso_graph_sync/src/schema_sync.rs:56</code></td>
+    </tr>
+    <tr>
+      <td><code>EntityCrdtIndex</code></td>
+      <td><code>Entity ↔ CrdtId</code> bidirectional map (separately for nodes and edges).</td>
+      <td><code>kyoso_graph_sync/src/index.rs</code></td>
+    </tr>
+    <tr>
+      <td>Bevy ECS world</td>
+      <td>Components, the on-screen <em>view</em> of the CRDT state.</td>
+      <td>n/a</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <span class="label">Key invariant</span>
+  Local mutations don't appear on screen until the server has echoed them back.
+  That one round-trip is what keeps <code>apply</code> idempotent and
+  deterministic over <code>GlobalSeq</code> order — every peer sees the same
+  ops in the same order.
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="derive">
+<h2>2 · What <code>#[derive(SchemaSync)]</code> generates</h2>
+
+<p>
+  Given a Bevy component with field-level <code>#[crdt(...)]</code> annotations,
+  the macro emits <strong>a sibling schema struct</strong> whose fields are the same
+  but whose types are swapped for CRDT primitives, plus a <code>SchemaSync</code>
+  impl that bridges the two.
+</p>
+
+<div class="grid-2">
+  <div class="panel bevy">
+    <h4>Bevy component — what you write</h4>
+    <div class="file-tag">crates/kyoso_figma/src/text.rs<span class="ln"> · 16</span></div>
+<pre><code class="language-rust">#[derive(Component, Default, Clone, Debug,
+         PartialEq, Reflect, SchemaSync)]
+#[reflect(Component, Default)]
+#[schema(name = "Text")]
+pub struct Text {
+    #[crdt(sequence)]
+    pub content: String,
+
+    #[crdt(nested)]
+    pub style: TypeStyle,
+
+    pub fills: Vec&lt;Paint&gt;,   // default = LWW
+}</code></pre>
+  </div>
+
+  <div class="panel crdt">
+    <h4>Generated schema — what the macro emits</h4>
+    <div class="file-tag">expanded — conceptual</div>
+<pre><code class="language-rust">#[derive(Clone, Debug, Default, PartialEq,
+         kyoso_crdt::DeriveCrdt)]
+pub struct TextSchema {
+    pub content: Sequence&lt;char&gt;,            // sequence
+    pub style:   TypeStyleSchema,           // nested
+    pub fills:   LwwRegister&lt;Vec&lt;Paint&gt;&gt;,   // lww (default)
+}
+
+impl SchemaSync for Text {
+    type Schema = TextSchema;
+    const SCHEMA_NAME: &amp;'static str = "Text";
+
+    fn changes_against(&amp;self, current: &amp;TextSchema)
+        -&gt; Vec&lt;TextSchemaMut&gt; { /* per-field diff */ }
+
+    fn write_back(&amp;mut self, schema: &amp;TextSchema) {
+        /* per-field projection */
+    }
+}</code></pre>
+  </div>
+</div>
+
+<h3><span class="num">2.1</span> Two macros, stacked</h3>
+
+<p>
+  <code>SchemaSync</code> only generates the <em>bridge</em>. The schema struct itself
+  becomes a real CRDT via a second macro, <code>DeriveCrdt</code>
+  (<code>crates/kyoso_crdt_derive</code>), which the outer derive stamps onto it. That
+  inner macro is what generates:
+</p>
+
+<ul>
+  <li><code>TextSchema::Mutation</code> and <code>TextSchema::Delta</code> enums — one variant per field</li>
+  <li><code>impl Crdt for TextSchema</code> — the <code>mutate()</code> dispatch</li>
+  <li><code>impl Lattice for TextSchema</code> — the merge function</li>
+  <li><code>impl SchemaApply for TextSchema</code> — <code>apply_wire</code> + <code>install_state</code></li>
+  <li><code>impl IntoWireOp for TextSchema::Delta</code> — <code>(Path, WireDelta)</code> lowering</li>
+</ul>
+
+<h3><span class="num">2.2</span> The two bridge functions</h3>
+
+<p>
+  This is the heart of the seam. Both functions are generated, one arm per field,
+  with the shape determined by the field's CRDT kind.
+</p>
+
+<div class="file-tag">
+  generated by crates/kyoso_sync_derive/src/lib.rs<span class="ln"> · 174–497</span>
+</div>
+<pre><code class="language-rust">// === LWW arm (the `fills` field) ===
+
+// changes_against:
+if *current.fills.get().unwrap_or(&amp;default.fills) != self.fills {
+    out.push(TextSchemaMut::Fills(LwwMut::Set(self.fills.clone())));
+}
+
+// write_back:
+if let Some(value) = schema.fills.get() {
+    self.fills = value.clone();
+}
+
+// === Nested arm (the `style` field) — delegates to the inner type ===
+
+// changes_against:
+for inner_mut in SchemaSync::changes_against(&amp;self.style, &amp;current.style) {
+    out.push(TextSchemaMut::Style(inner_mut));
+}
+
+// write_back:
+SchemaSync::write_back(&amp;mut self.style, &amp;schema.style);
+
+// === Sequence arm (the `content` field) ===
+
+// changes_against:
+let doc_view: Vec&lt;char&gt; = current.content.iter().into_iter().copied().collect();
+for inner_mut in kyoso_sync::sequence_diff(doc_view, self.content.chars()) {
+    out.push(TextSchemaMut::Content(inner_mut));
+}
+
+// write_back:
+self.content = schema.content.iter().into_iter().copied().collect::&lt;String&gt;();</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<section id="field-kinds">
+<h2>3 · Per-field CRDT-kind table</h2>
+
+<p>
+  The attribute on each field selects which CRDT primitive shows up in the
+  generated schema and which diff/projection strategy the bridge uses.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Attribute</th>
+      <th>Schema-side type</th>
+      <th><code>changes_against</code></th>
+      <th><code>write_back</code></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="pill lww">default / lww</span></td>
+      <td><code>LwwRegister&lt;T&gt;</code></td>
+      <td>Echo-guard against <code>Self::default()</code>; emit <code>Set</code> if differs</td>
+      <td>Pull <code>get()</code> if <code>Some</code></td>
+    </tr>
+    <tr>
+      <td><span class="pill orset">or_set</span></td>
+      <td><code>OrSet&lt;T&gt;</code> from <code>Vec&lt;T&gt;</code> / <code>HashSet&lt;T&gt;</code></td>
+      <td>Set-diff: <code>Add</code> for new, <code>Remove</code> for missing</td>
+      <td>Collect <code>iter()</code></td>
+    </tr>
+    <tr>
+      <td><span class="pill counter">counter</span></td>
+      <td><code>PnCounter</code> (field must be integer)</td>
+      <td><code>Inc</code> / <code>Dec</code> by signed diff</td>
+      <td>Cast <code>value()</code> back to field type</td>
+    </tr>
+    <tr>
+      <td><span class="pill map">map</span></td>
+      <td><code>CausalMap&lt;LwwRegister&lt;V&gt;&gt;</code> (string keys only)</td>
+      <td>Per-key <code>Apply</code> / <code>Remove</code></td>
+      <td>Rebuild from non-bottom entries</td>
+    </tr>
+    <tr>
+      <td><span class="pill nested">nested</span></td>
+      <td><code>&lt;T as SchemaSync&gt;::Schema</code></td>
+      <td>Delegate to inner type's <code>changes_against</code></td>
+      <td>Delegate to inner type's <code>write_back</code></td>
+    </tr>
+    <tr>
+      <td><span class="pill seq">sequence</span></td>
+      <td><code>Sequence&lt;char&gt;</code> or <code>Sequence&lt;T&gt;</code></td>
+      <td>Index diff via <code>sequence_diff</code> (RGA inserts/deletes)</td>
+      <td>Collect <code>iter()</code> back to <code>String</code> / <code>Vec&lt;T&gt;</code></td>
+    </tr>
+    <tr>
+      <td><span class="pill with">with = "Type"</span></td>
+      <td>The named <code>Type</code> (must impl <code>SchemaField</code>)</td>
+      <td>Delegate to <code>Type::changes_against</code></td>
+      <td>Delegate to <code>Type::project_to</code></td>
+    </tr>
+    <tr>
+      <td><span class="pill">skip</span></td>
+      <td>(omitted from schema)</td>
+      <td>Field is purely local — never replicated</td>
+      <td>Untouched</td>
+    </tr>
+  </tbody>
+</table>
+
+<p style="color: var(--muted); font-size: 13px;">
+  Spec lives in <code>crates/kyoso_sync_derive/src/lib.rs:38–49</code>; codegen
+  arms at <code>lib.rs:174–497</code>.
+</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="pipeline">
+<h2>4 · The four-phase pipeline</h2>
+
+<p>
+  One frame of <code>Update</code> in a kyoso client. The schema chain in Phase 3
+  is repeated once per registered component type.
+</p>
+
+<div class="mermaid">
+flowchart TB
+  WS[("WebSocket inbound")] --> P1
+  P1["Phase 1<br/><b>graph_inbound_system</b><br/><i>Welcome / Apply / Catchup</i><br/>writes RemoteOpApplied events"]
+  P1 --> P2
+  P2["Phase 2<br/><b>Structural detection</b><br/>detect_added_nodes/edges<br/>detect_tree_moves<br/>detect_removed_nodes/edges"]
+  P2 --> P3
+
+  subgraph P3["Phase 3 — Schema chain (per registered C)"]
+    direction TB
+    S1["ensure_schema_slots"]
+    S2["route_typed_inbound<br/><i>RemoteOpApplied → SchemaDoc</i>"]
+    S3["project_typed_to_bevy<br/><i>SchemaDoc → Bevy component</i>"]
+    S4["detect_typed_changes<br/><i>Changed&lt;C&gt; → emit op</i>"]
+    S1 --> S2 --> S3 --> S4
+  end
+
+  P3 --> P4
+  P4["Phase 4<br/><b>outbound_system</b><br/>drain engine, postcard-encode, ship"]
+  P4 --> WS2[("WebSocket outbound")]
+
+  classDef phase fill:#1c2a3a,stroke:#7ab7ff,color:#d8e0eb;
+  classDef chain fill:#2a1c3a,stroke:#b78cff,color:#d8e0eb;
+  classDef io fill:#1a2530,stroke:#8a96a8,color:#d8e0eb;
+  class P1,P2,P4 phase
+  class P3,S1,S2,S3,S4 chain
+  class WS,WS2 io
+</div>
+
+<div class="note">
+  <span class="label">Order matters</span>
+  Inbound (<code>route_typed_inbound</code>) runs <em>before</em> outbound detection
+  (<code>detect_typed_changes</code>) in the same frame. A remote write arriving
+  on the same tick as a local edit lands in the doc first, so when the local
+  diff runs the doc already reflects the remote state — no double-emission.
+  LWW conflicts are resolved by <code>GlobalSeq</code> on the server.
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="outbound">
+<h2>5 · Outbound — Bevy edit → wire op</h2>
+
+<p>
+  When you mutate <code>component.field = new_value</code> in a Bevy system, here's
+  the path to the wire.
+</p>
+
+<div class="flow-step">
+  <div class="step-num">1</div>
+  <div class="step-body">
+    <p><strong>Bevy fires <code>Changed&lt;C&gt;</code></strong> on the next frame.</p>
+<pre><code class="language-rust">fn user_system(mut q: Query&lt;&amp;mut Text&gt;) {
+    for mut text in &amp;mut q {
+        text.content.push_str(" world"); // Changed&lt;Text&gt; will fire
+    }
+}</code></pre>
+  </div>
+</div>
+
+<div class="flow-step">
+  <div class="step-num">2</div>
+  <div class="step-body">
+    <p><strong><code>detect_typed_changes</code> picks it up</strong>, fetches the doc's current schema, and asks the bridge for the diff.</p>
+    <div class="file-tag">crates/kyoso_graph_sync/src/schema_sync.rs<span class="ln"> · 323</span></div>
+<pre><code class="language-rust">let Some(id)      = T::id_for(&amp;index, entity)  else { continue };
+let Some(current) = doc.schema(id)             else { continue };
+
+// Reconnect-clobber guard — see §8.
+if component.is_added() &amp;&amp; *current != empty_schema { continue; }
+
+let mutations = component.changes_against(current);
+if mutations.is_empty() { continue; }</code></pre>
+  </div>
+</div>
+
+<div class="flow-step">
+  <div class="step-num">3</div>
+  <div class="step-body">
+    <p><strong>Each mutation is run through a throwaway copy</strong> of the schema to compute the typed <code>Delta</code>, which is then lowered to wire format.</p>
+<pre><code class="language-rust">let mut throwaway = current.clone();
+for mutation in mutations {
+    let op_id     = engine.mint_id();
+    let mut state = kyoso_crdt::CausalState::new();
+    let mut ctx   = kyoso_crdt::CausalContext::new(op_id, None, &amp;mut state);
+
+    let typed_delta       = throwaway.mutate(mutation, &amp;mut ctx);
+    let (inner_path, wire) = typed_delta.into_wire_op();
+    // …
+}</code></pre>
+  </div>
+</div>
+
+<div class="flow-step">
+  <div class="step-num">4</div>
+  <div class="step-body">
+    <p>
+      <strong>The path is namespaced with <code>SCHEMA_NAME</code></strong>. This is how a single
+      shared <code>OpKind::SetNodeProperty</code> multiplexes ops for any number of
+      schema types — the wire-side <code>Path</code> looks like
+      <span class="path">["Text", "content"]</span> rather than just
+      <span class="path">["content"]</span>.
+    </p>
+<pre><code class="language-rust">let mut path = Path::field(C::SCHEMA_NAME);   // ["Text"]
+for seg in inner_path.0 { path.0.push(seg); } // ["Text", "content"]
+
+engine.enqueue(Op::new(op_id, T::build_op(id, path, wire)));
+//                                ^^^^^^^^^
+//      NodeTarget → SetNodeProperty
+//      EdgeTarget → SetRefEdgeProperty</code></pre>
+  </div>
+</div>
+
+<div class="flow-step">
+  <div class="step-num">5</div>
+  <div class="step-body">
+    <p><strong><code>outbound_system</code> (Phase 4)</strong> drains the engine's pending queue, postcard-encodes, and ships each op via the WebSocket bridge.</p>
+  </div>
+</div>
+
+<div class="note warn">
+  <span class="label">Why a throwaway clone?</span>
+  The <code>SchemaDoc</code> is only mutated by server-confirmed ops via
+  <code>apply_property_op</code> in <code>route_typed_inbound</code>. Local mutations
+  pre-stamping would desync the lattice if the server rejected them.
+  Using a clone for <code>mutate()</code> keeps the doc clean and lets the server
+  be authoritative.
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="inbound">
+<h2>6 · Inbound — wire op → Bevy projection</h2>
+
+<p>
+  The mirror image. A <code>SetNodeProperty</code> op arrives over the WebSocket;
+  it ends up writing the corresponding Bevy component a couple of system runs later.
+</p>
+
+<div class="flow-step">
+  <div class="step-num">1</div>
+  <div class="step-body">
+    <p>
+      <strong>Phase 1 — <code>graph_inbound_system</code></strong> reads
+      <code>WsInbound</code> events, calls <code>engine.apply_remote</code> for
+      every op, and writes a <code>RemoteOpApplied(op)</code> Bevy message for
+      anything the schema chain needs to consume.
+    </p>
+  </div>
+</div>
+
+<div class="flow-step">
+  <div class="step-num">2</div>
+  <div class="step-body">
+    <p><strong><code>route_typed_inbound</code></strong> filters those events for ops whose path head matches this <code>C</code>'s <code>SCHEMA_NAME</code>, strips the head, and applies the rest to the doc.</p>
+    <div class="file-tag">crates/kyoso_graph_sync/src/schema_sync.rs<span class="ln"> · 385</span></div>
+<pre><code class="language-rust">for ev in events.read() {
+    let op = &amp;ev.0;
+    let Some((target, path, delta)) = T::match_inbound(&amp;op.kind) else { continue };
+    let Some(PathSegment::Field(head)) = path.0.first()          else { continue };
+    if head != C::SCHEMA_NAME { continue; }   // namespace filter
+
+    let inner_path = Path(path.0[1..].to_vec());
+    let stripped   = Op {
+        id:   op.id,
+        seq:  op.seq,
+        kind: T::build_op(target, inner_path, delta.clone()),
+    };
+    doc.apply_property_op(&amp;stripped)?;       // updates SchemaDoc&lt;C::Schema&gt;
+}</code></pre>
+  </div>
+</div>
+
+<div class="flow-step">
+  <div class="step-num">3</div>
+  <div class="step-body">
+    <p><strong><code>project_typed_to_bevy</code></strong> notices <code>doc.is_changed()</code> and writes every indexed entity's schema back into its Bevy component via the bridge.</p>
+<pre><code class="language-rust">if !doc.is_changed() { return; }
+for (entity, id) in T::pairs(&amp;index).iter() {
+    let Some(schema) = doc.schema(*id) else { continue };
+    match components.get_mut(*entity) {
+        Ok(mut component) =&gt; component.write_back(schema),
+        Err(_) =&gt; {
+            // Entity doesn't have C yet (snapshot-spawned without it).
+            // Queue a command that inserts C::default() then write_back.
+            commands.queue(InsertSchemaProjected::&lt;C&gt; { entity: *entity, schema: schema.clone(), .. });
+        }
+    }
+}</code></pre>
+  </div>
+</div>
+
+<div class="arrow-row">
+  <div class="panel bevy">
+    <h4>Inbound side-effects</h4>
+    <ul style="margin: 0; padding-left: 18px;">
+      <li><code>SchemaDoc&lt;C::Schema&gt;</code> mutates → <code>is_changed()</code> fires</li>
+      <li>Bevy component fields get overwritten by <code>write_back</code></li>
+      <li><code>Changed&lt;C&gt;</code> would fire next frame…</li>
+      <li>…but <code>changes_against</code> returns empty (doc already matches)</li>
+    </ul>
+  </div>
+  <div class="arrow left">←</div>
+  <div class="panel crdt">
+    <h4>Outbound echo-guard</h4>
+    <ul style="margin: 0; padding-left: 18px;">
+      <li>No new ops emitted from a remote write</li>
+      <li>Echo prevention is <em>stateful comparison</em>, not a "just-projected" set</li>
+      <li>Tried-and-removed: explicit echo bookkeeping (subsumed by this check)</li>
+    </ul>
+  </div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="worked">
+<h2>7 · Worked example — <code>Text</code></h2>
+
+<p>
+  Tracing each of <code>Text</code>'s three fields end-to-end. The component lives at
+  <code>crates/kyoso_figma/src/text.rs:16</code>, with the nested type at
+  <code>typestyle.rs:12</code>.
+</p>
+
+<h3><code>content: String</code> <span class="pill seq">sequence</span></h3>
+
+<div class="grid-2">
+  <div class="panel bevy">
+    <h4>Bevy edit</h4>
+<pre><code class="language-rust">text.content = "Hi world".into();
+// (previous was "Hello")</code></pre>
+  </div>
+  <div class="panel crdt">
+    <h4>Wire ops produced</h4>
+<pre><code class="language-rust">SetNodeProperty {
+  target: id,
+  path:   ["Text", "content"],
+  delta:  SequenceDelta::Delete { positions… }
+}
+SetNodeProperty {
+  target: id,
+  path:   ["Text", "content"],
+  delta:  SequenceDelta::Insert { chars… }
+}</code></pre>
+  </div>
+</div>
+
+<p>
+  <code>sequence_diff</code> computes a prefix/suffix-aware character-level diff
+  against the doc's <code>Sequence&lt;char&gt;</code>. The CRDT itself is RGA-style
+  (Replicated Growable Array) so concurrent edits at the same position from
+  different peers interleave deterministically rather than clobber.
+</p>
+
+<h3><code>style: TypeStyle</code> <span class="pill nested">nested</span></h3>
+
+<div class="grid-2">
+  <div class="panel bevy">
+    <h4>Bevy edit</h4>
+<pre><code class="language-rust">text.style.font_size = 24.0;
+// font_family, font_weight,
+// line_height unchanged</code></pre>
+  </div>
+  <div class="panel crdt">
+    <h4>Wire op produced</h4>
+<pre><code class="language-rust">SetNodeProperty {
+  target: id,
+  path:   ["Text", "style", "font_size"],
+  delta:  LwwDelta::Set(24.0)
+}</code></pre>
+  </div>
+</div>
+
+<p>
+  Recursion: <code>Text::changes_against</code> delegates to
+  <code>TypeStyle::changes_against</code> for the <code>style</code> field, wraps each
+  returned mutation in <code>TextSchemaMut::Style(inner)</code>, and lets the path
+  segments accumulate naturally as the <code>Delta</code> is lowered. Two peers
+  concurrently changing different sub-fields (one edits <code>font_size</code>,
+  one edits <code>font_family</code>) merge without conflict — that's the whole
+  point of <code>#[crdt(nested)]</code> vs. wrapping the entire struct in LWW.
+</p>
+
+<h3><code>fills: Vec&lt;Paint&gt;</code> <span class="pill lww">lww</span> (default)</h3>
+
+<div class="grid-2">
+  <div class="panel bevy">
+    <h4>Bevy edit</h4>
+<pre><code class="language-rust">text.fills = vec![Paint::Solid(red)];
+// concurrent peer sets fills to
+// vec![Paint::Solid(blue)]</code></pre>
+  </div>
+  <div class="panel crdt">
+    <h4>Wire op produced</h4>
+<pre><code class="language-rust">SetNodeProperty {
+  target: id,
+  path:   ["Text", "fills"],
+  delta:  LwwDelta::Set(vec![Paint::Solid(red)])
+}</code></pre>
+  </div>
+</div>
+
+<p>
+  Whole-list LWW: only one peer's <code>Vec</code> survives, resolved by
+  <code>GlobalSeq</code> on the server. If you wanted per-element conflict-free
+  merging instead, you'd use <code>#[crdt(or_set)]</code> (membership) or a
+  sequence (if order matters).
+</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="guard">
+<h2>8 · The reconnect-clobber guard</h2>
+
+<p>
+  This is the bug that catches everyone who builds a system like this. It's
+  worth understanding because it explains a non-obvious condition in
+  <code>detect_typed_changes</code>.
+</p>
+
+<div class="note warn">
+  <span class="label">The failure mode</span>
+  <p>A peer reconnects. The server sends a <code>Welcome</code> snapshot. Locally:</p>
+  <ol>
+    <li><code>hydrate_typed_schemas</code> populates every <code>SchemaDoc</code> with the real per-id state.</li>
+    <li><code>project_snapshot</code> queues <code>commands.spawn(N::default())</code> for each node — but only the structural marker is in the bundle.</li>
+    <li>Bevy's <code>Add</code> observer fires synchronously; any <code>#[require(...)]</code> components (Transform, Mesh3d, …) get auto-inserted with <code>Default::default()</code>.</li>
+    <li>That trips <code>Changed&lt;C&gt;</code> <em>before</em> <code>project_typed_to_bevy</code> has a chance to write the hydrated values back.</li>
+    <li>A naive <code>changes_against</code> sees "component is default, doc has real values" and emits ops setting every field to its local default — broadcasting them to the room and wiping out the canonical state on every peer.</li>
+  </ol>
+</div>
+
+<h3>The discriminator</h3>
+
+<div class="file-tag">crates/kyoso_graph_sync/src/schema_sync.rs<span class="ln"> · 362</span></div>
+<pre><code class="language-rust">// Snapshot-hydrated entities have `component.is_added()` AND the doc already
+// holds non-default state (it was just installed by `hydrate_typed_schemas`).
+// User-spawned entities also have `is_added()` but the doc is still at lattice
+// bottom for that id, so they fall through to the regular detect path and the
+// initial values do replicate.
+if component.is_added() &amp;&amp; *current != empty_schema {
+    continue;
+}</code></pre>
+
+<table>
+  <thead>
+    <tr><th>Case</th><th><code>is_added()</code></th><th>doc state</th><th>Behaviour</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Snapshot-hydrated entity</td>
+      <td>true</td>
+      <td>non-default</td>
+      <td><strong>Skip</strong> — let projection overwrite component</td>
+    </tr>
+    <tr>
+      <td>User-spawned entity</td>
+      <td>true</td>
+      <td>default (empty)</td>
+      <td>Continue — emit ops for the initial field values</td>
+    </tr>
+    <tr>
+      <td>Existing entity, local edit</td>
+      <td>false</td>
+      <td>any</td>
+      <td>Continue — emit ops for the diff</td>
+    </tr>
+    <tr>
+      <td>Existing entity, just got remote write</td>
+      <td>false</td>
+      <td>matches component</td>
+      <td>Continue, but <code>changes_against</code> returns <code>vec![]</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <span class="label">Why <code>PartialEq</code> on <code>Schema</code> is required</span>
+  The bound <code>S: PartialEq</code> on <code>SchemaSync::Schema</code> isn't decoration —
+  it's exactly so we can distinguish "the doc holds real hydrated state" from "the doc is
+  still at its empty/default lattice bottom." Without it, this guard is unimplementable.
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="hydration">
+<h2>9 · Late-join hydration</h2>
+
+<p>
+  The server doesn't know the concrete <code>S</code> for any peer's schema doc —
+  it stores everything as <code>OpaqueRecord</code>, a <code>BTreeMap&lt;Path, OpaqueValue&gt;</code>
+  of raw per-primitive bytes. On <code>Welcome</code> the joining peer has to demux
+  those blobs back into the right <code>SchemaDoc&lt;S&gt;</code> resources.
+</p>
+
+<div class="mermaid">
+flowchart LR
+  Snap["Server snapshot<br/>OpaqueRecord<br/>{ Path → OpaqueValue }"]
+  Reg["SchemaHydrators registry<br/>(TargetKind, SCHEMA_NAME) → HydratorFn"]
+  Doc1["SchemaDoc&lt;TextSchema&gt;"]
+  Doc2["SchemaDoc&lt;TypeStyleSchema&gt;"]
+  Doc3["SchemaDoc&lt;TransformSchema&gt;"]
+
+  Snap --> Reg
+  Reg --> Doc1
+  Reg --> Doc2
+  Reg --> Doc3
+
+  classDef src fill:#1a2530,stroke:#8a96a8,color:#d8e0eb;
+  classDef reg fill:#2a1c3a,stroke:#b78cff,color:#d8e0eb;
+  classDef doc fill:#1c2a3a,stroke:#7ab7ff,color:#d8e0eb;
+  class Snap src
+  class Reg reg
+  class Doc1,Doc2,Doc3 doc
+</div>
+
+<p>
+  At app-build time each <code>SchemaSyncedNodeComponentPlugin</code> registers a
+  monomorphized <code>hydrate_schema_doc::&lt;C&gt;</code> under the key
+  <code>(TargetKind, C::SCHEMA_NAME)</code>:
+</p>
+
+<div class="file-tag">crates/kyoso_graph_sync/src/schema_sync.rs<span class="ln"> · 287</span></div>
+<pre><code class="language-rust">fn hydrate_schema_doc&lt;C&gt;(world: &amp;mut World, target: CrdtId, path: Path, field: OpaqueValue)
+where
+    C: SchemaSync,
+{
+    let mut doc = world.resource_mut::&lt;SchemaDoc&lt;C::Schema&gt;&gt;();
+    doc.ensure_schema(target);
+    if let Some(state) = doc.schema_mut(target) {
+        // SchemaApply::install_state — the other half of derive(Crdt).
+        // Decodes the opaque bytes via the schema's known type.
+        state.install_state(&amp;path, field)?;
+    }
+}</code></pre>
+
+<p>
+  At <code>Welcome</code> time the inbound system walks every
+  <code>(target, opaque_value)</code> pair from the snapshot, looks up the
+  hydrator by <code>(TargetKind, schema_name)</code>, and dispatches.
+  The hydrator's monomorphization knows the concrete <code>S</code>, so
+  <code>install_state</code> can decode the bytes via the typed
+  <code>SchemaApply</code> impl.
+</p>
+</section>
+
+<hr />
+
+<!-- ============================================================ -->
+<section>
+<h2>Summary — the seam in one screen</h2>
+
+<div class="grid-2">
+  <div class="panel">
+    <h4>What the macro does</h4>
+    <ol>
+      <li>Reads <code>#[crdt(...)]</code> on each field.</li>
+      <li>Emits a sibling <code>CSchema</code> struct with each field's type swapped for the matching CRDT primitive.</li>
+      <li>Stamps <code>kyoso_crdt::DeriveCrdt</code> on it — that's what makes the schema a real CRDT.</li>
+      <li>Emits <code>impl SchemaSync for C</code> with the two bridge functions.</li>
+    </ol>
+  </div>
+  <div class="panel">
+    <h4>What the runtime does</h4>
+    <ol>
+      <li>Stores per-id schema state in <code>SchemaDoc&lt;C::Schema&gt;</code> resources.</li>
+      <li>Each frame: hydrate slots, route inbound ops into the doc, project doc to component, detect Bevy edits and emit ops.</li>
+      <li>Wire format namespaces with <code>SCHEMA_NAME</code> so all schemas share one <code>OpKind</code>.</li>
+      <li>Server stores everything as opaque bytes; clients hydrate via a registered <code>HydratorFn</code> per <code>(TargetKind, SCHEMA_NAME)</code>.</li>
+    </ol>
+  </div>
+</div>
+</section>
+
+<footer>
+  <p>
+    Companion to <code>ecs-crdt-sync.md</code>. Source of truth for the runtime
+    is <code>crates/kyoso_graph_sync/src/schema_sync.rs</code>; source of truth
+    for the macro is <code>crates/kyoso_sync_derive/src/lib.rs</code>.
+  </p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-rust.min.js"></script>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#161b22',
+      primaryColor: '#1c2a3a',
+      primaryBorderColor: '#7ab7ff',
+      primaryTextColor: '#d8e0eb',
+      lineColor: '#7ab7ff',
+      fontFamily: 'ui-monospace, "JetBrains Mono", Menlo, monospace',
+      fontSize: '13px',
+    },
+  });
+</script>
+</body>
+</html>

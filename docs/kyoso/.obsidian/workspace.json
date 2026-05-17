@@ -6,24 +6,9 @@
       {
         "id": "b5b9da6213596b00",
         "type": "tabs",
-        "dimension": 62.861010830324915,
         "children": [
           {
-            "id": "d5d21ebe85ea7e5d",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "system-design/architecture-evolution.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "architecture-evolution"
-            }
-          },
-          {
-            "id": "681b156d89e5cca0",
+            "id": "7bee0c5d8c26b463",
             "type": "leaf",
             "state": {
               "type": "markdown",
@@ -37,41 +22,21 @@
             }
           },
           {
-            "id": "c73bc70a38daede8",
+            "id": "9e356c684106176d",
             "type": "leaf",
             "state": {
               "type": "markdown",
               "state": {
-                "file": "system-design/event_bus.md",
+                "file": "code.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "event_bus"
+              "title": "code"
             }
           }
-        ]
-      },
-      {
-        "id": "777b88c1a7cce264",
-        "type": "tabs",
-        "dimension": 37.13898916967509,
-        "children": [
-          {
-            "id": "6a6819305fd4ebac",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "system-design/Collaboration from first principles.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "Collaboration from first principles"
-            }
-          }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -230,18 +195,23 @@
       "bases:Create new base": false
     }
   },
-  "active": "d5d21ebe85ea7e5d",
+  "active": "9e356c684106176d",
   "lastOpenFiles": [
-    "system-design/creating-new-crdt-structures.md",
-    "system-design/crdt-infrastructure-design.md",
-    "system-design/refactoring-plan-unified-backend.md",
-    "system-design/backend-vs-document.md",
-    "system-design/crdt-overview.md",
-    "system-design/architecture-evolution.md",
-    "system-design/Collaboration from first principles.md",
     "system-design/crdt.md",
-    "system-design/crdt-overview.md.tmp.56476.47f5af55cfdf",
+    "code.md",
+    "system-design/collaboration from first principles.md",
+    "system-design/backend-vs-document.md",
+    "system-design/architecture-evolution.md",
+    "crdt.md",
+    "system-design/precis.md",
+    "system-design/ecs-crdt-sync.html",
+    "system-design/refactoring-plan-unified-backend.md",
     "system-design/event_bus.md",
+    "system-design/ecs-crdt-sync.md",
+    "system-design/creating-new-crdt-structures.md",
+    "system-design/crdt-overview.md",
+    "system-design/crdt-infrastructure-design.md",
+    "system-design/memo.md",
     "system-design/compute/02_authorization.md",
     "system-design/compute/01_storage.md",
     "system-design/compute/00_overview.md",

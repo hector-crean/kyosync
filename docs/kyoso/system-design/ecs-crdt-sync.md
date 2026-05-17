@@ -633,7 +633,7 @@ Related docs:
 
 - [`crdt-overview.md`](crdt-overview.md) — substrate, primitives,
   worked composition examples, presence vs storage split.
-- [`crdt.md`](crdt.md) — research landscape (Fugue, Eg-walker, Loro,
+- [`crdt.md`](system-design/crdt.md) — research landscape (Fugue, Eg-walker, Loro,
   Yjs), deferred decisions, the original phased plan.
 - [`event_bus.md`](event_bus.md) — how the client app's external
   message bus sits *alongside* the CRDT sync layer.
