@@ -8,6 +8,9 @@
 .idea/
 .vscode/
 
+# Claude Code (local settings + worktrees)
+.claude/
+
 # Rust backup
 **/*.rs.bk
 
