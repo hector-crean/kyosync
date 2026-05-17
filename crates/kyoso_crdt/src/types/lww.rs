@@ -52,7 +52,7 @@ impl<T> LwwRegister<T> {
 
 impl<T: Clone + Default> LwwRegister<T> {
     /// Read the current value, or `T::default()` if the register is
-    /// empty. Useful in `SchemaSync::changes_against` impls: comparing
+    /// empty. Useful in `SchemaSync::diff` impls: comparing
     /// `self.field` against `doc.field.get_or_default()` treats an
     /// un-stamped (bottom) doc value as "default, no opinion", which
     /// avoids emitting echo ops for fields the local replica has never

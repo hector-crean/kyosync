@@ -8,7 +8,7 @@
 //! - **Phase C** (landed): `#[crdt(or_set)]`, `#[crdt(counter)]`.
 //! - **Phase D** (landed): `#[crdt(map)]`, `#[crdt(nested)]`.
 //! - **Phase E** (landed): `#[crdt(with = "Type")]` escape hatch.
-//! - **Phase F** (this): `#[crdt(sequence)]` for `String` / `Vec<T>`.
+//! - **Phase F** (landed): `#[crdt(sequence)]` for `String` / `Vec<T>`.
 //!
 //! ## Example
 //!
@@ -33,18 +33,22 @@
 //! }
 //! ```
 //!
-//! Per-field CRDT kind drives schema-side type and the shape of the
-//! generated `changes_against` / `write_back`:
+//! ## Codegen shape
 //!
-//! | Field attr | Schema-side type | `changes_against` semantics |
+//! Per-field CRDT kind drives only the *schema-side type*; the
+//! `diff` / `write_back` bodies are uniform — one delegation
+//! to that type's [`kyoso_graph_sync::SchemaField`] impl per field. The
+//! per-kind diff/projection logic lives in those impls, not here.
+//!
+//! | Field attr | Schema-side type | `SchemaField` impl behaviour |
 //! |---|---|---|
-//! | (default) / `#[crdt(lww)]` | `LwwRegister<T>` | echo-guard against `Self::default()` |
-//! | `#[crdt(or_set)]` | `OrSet<T>` (T from `Vec<T>` / `HashSet<T>`) | set-diff: `Add` for new, `Remove` for missing |
-//! | `#[crdt(counter)]` | `PnCounter` (component is `i64`) | `Inc`/`Dec` by the signed diff |
+//! | (default) / `#[crdt(lww)]` | `LwwRegister<T>` | echo-guard against the field's default |
+//! | `#[crdt(or_set)]` | `OrSet<T>` (T from `Vec<T>` / `HashSet<T>` / `BTreeSet<T>`) | set-diff: `Add` for new, `Remove` for missing |
+//! | `#[crdt(counter)]` | `PnCounter` (component is an integer) | `Inc`/`Dec` by the signed diff |
 //! | `#[crdt(map)]` | `CausalMap<LwwRegister<V>>` (component is `HashMap<String, V>`) | per-key `Apply` for changed values, `Remove` for absent keys |
-//! | `#[crdt(nested)]` | `<T as SchemaSync>::Schema` | delegate to the inner type's own `changes_against` |
-//! | `#[crdt(with = "Type")]` | the named `Type` (must impl [`kyoso_sync::SchemaField`](../kyoso_sync/trait.SchemaField.html)) | delegate to `Type`'s `SchemaField::changes_against` |
-//! | `#[crdt(sequence)]` | `Sequence<char>` (component is `String`) or `Sequence<T>` (component is `Vec<T>`) | prefix-suffix diff via [`kyoso_sync::sequence_diff`] |
+//! | `#[crdt(nested)]` | `<T as SchemaSync>::Schema` | delegate to the inner type's own `diff` |
+//! | `#[crdt(with = "Type")]` | the named `Type` (must impl [`kyoso_graph_sync::SchemaField`]) | delegate to `Type`'s `SchemaField` impl |
+//! | `#[crdt(sequence)]` | `Sequence<char>` (component is `String`) or `Sequence<T>` (component is `Vec<T>`) | prefix-suffix diff via `kyoso_sync::sequence_diff` |
 //!
 //! See plan doc Part IX §IX.3 for the full default-CRDT-type rules.
 
@@ -154,8 +158,10 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         ));
     }
 
-    // Generate per-field schema entries, changes_against arms, and
-    // write_back arms. Each kind produces its own shape.
+    // Each field contributes one schema-struct field plus one uniform
+    // `diff` / `write_back` arm. The CRDT kind only picks the
+    // schema-side type; the diff/projection logic lives in that type's
+    // `SchemaField` impl, which both arms delegate to.
     let mut schema_struct_fields: Vec<TokenStream2> = Vec::new();
     let mut changes_arms: Vec<TokenStream2> = Vec::new();
     let mut write_back_arms: Vec<TokenStream2> = Vec::new();
@@ -169,331 +175,81 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             vis,
             default_expr,
             kind,
-            ..
         } = field;
-        match kind {
-            FieldCrdtKind::Lww => {
-                schema_struct_fields.push(quote! {
-                    #vis #field_schema_ident:
-                        ::kyoso_crdt::types::LwwRegister<#ty>,
-                });
-                changes_arms.push(quote! {
-                    if *current.#field_schema_ident
-                        .get()
-                        .unwrap_or(&#default_expr)
-                        != self.#component_ident
-                    {
-                        out.push(
-                            #schema_mut_ident::#variant_ident(
-                                ::kyoso_crdt::types::LwwMut::Set(
-                                    ::core::clone::Clone::clone(
-                                        &self.#component_ident,
-                                    ),
-                                ),
-                            ),
-                        );
-                    }
-                });
-                write_back_arms.push(quote! {
-                    if let ::core::option::Option::Some(value) =
-                        schema.#field_schema_ident.get()
-                    {
-                        self.#component_ident = ::core::clone::Clone::clone(value);
-                    }
-                });
-            }
+
+        // The schema-side CRDT type for this field. This is the *only*
+        // thing the CRDT kind influences; everything below is uniform.
+        let schema_field_ty: TokenStream2 = match kind {
+            FieldCrdtKind::Lww => quote! {
+                ::kyoso_crdt::types::LwwRegister<#ty>
+            },
             FieldCrdtKind::OrSet => {
                 let inner = extract_set_inner_type(ty)?;
-                schema_struct_fields.push(quote! {
-                    #vis #field_schema_ident:
-                        ::kyoso_crdt::types::OrSet<#inner>,
-                });
-                // Set-diff. Both sides yield `&T`, so comparisons via
-                // `PartialEq for T` are direct (no deref gymnastics).
-                changes_arms.push(quote! {
-                    {
-                        // Adds: elements present locally but absent from
-                        // the doc-side membership.
-                        for elem in self.#component_ident.iter() {
-                            let in_doc = current.#field_schema_ident
-                                .iter()
-                                .any(|e| e == elem);
-                            if !in_doc {
-                                out.push(
-                                    #schema_mut_ident::#variant_ident(
-                                        ::kyoso_crdt::types::OrSetMut::Add(
-                                            ::core::clone::Clone::clone(elem),
-                                        ),
-                                    ),
-                                );
-                            }
-                        }
-                        // Removes: elements present in the doc but no
-                        // longer locally.
-                        for doc_elem in current.#field_schema_ident.iter() {
-                            let in_self = self.#component_ident
-                                .iter()
-                                .any(|e| e == doc_elem);
-                            if !in_self {
-                                out.push(
-                                    #schema_mut_ident::#variant_ident(
-                                        ::kyoso_crdt::types::OrSetMut::Remove(
-                                            ::core::clone::Clone::clone(doc_elem),
-                                        ),
-                                    ),
-                                );
-                            }
-                        }
-                    }
-                });
-                write_back_arms.push(quote! {
-                    self.#component_ident = schema.#field_schema_ident
-                        .iter()
-                        .cloned()
-                        .collect();
-                });
+                quote! { ::kyoso_crdt::types::OrSet<#inner> }
             }
             FieldCrdtKind::Counter => {
-                // Validate the field type is a supported integer.
                 require_counter_type(ty)?;
-                schema_struct_fields.push(quote! {
-                    #vis #field_schema_ident: ::kyoso_crdt::types::PnCounter,
-                });
-                // Diff against current.value(). Cast to i64 for safety;
-                // the field type is constrained by require_counter_type.
-                changes_arms.push(quote! {
-                    {
-                        let current_value: i64 =
-                            current.#field_schema_ident.value();
-                        let target_value: i64 = self.#component_ident as i64;
-                        let diff: i64 = target_value - current_value;
-                        if diff > 0 {
-                            out.push(
-                                #schema_mut_ident::#variant_ident(
-                                    ::kyoso_crdt::types::PnMut::Inc(diff as u64),
-                                ),
-                            );
-                        } else if diff < 0 {
-                            out.push(
-                                #schema_mut_ident::#variant_ident(
-                                    ::kyoso_crdt::types::PnMut::Dec(
-                                        diff.unsigned_abs(),
-                                    ),
-                                ),
-                            );
-                        }
-                    }
-                });
-                write_back_arms.push(quote! {
-                    {
-                        // PnCounter::value() returns i64. Cast back to
-                        // the component's declared field type. Using
-                        // `as` here intentionally — the user opted into
-                        // a counter on this type, so saturating /
-                        // wrapping behavior is on them.
-                        self.#component_ident =
-                            schema.#field_schema_ident.value() as #ty;
-                    }
-                });
+                quote! { ::kyoso_crdt::types::PnCounter }
             }
             FieldCrdtKind::Map => {
-                // Field must be `HashMap<String, V>` or
-                // `BTreeMap<String, V>`. The schema-side type is
-                // `CausalMap<LwwRegister<V>>` (CausalMap is fixed to
-                // String keys; LWW per-value is the Phase D default —
-                // future work could parameterise the inner CRDT).
+                // CausalMap is fixed to String keys; LWW per-value is the
+                // Phase D default — future work could parameterise the
+                // inner CRDT.
                 let value_ty = extract_map_value_type(ty)?;
-                schema_struct_fields.push(quote! {
-                    #vis #field_schema_ident:
-                        ::kyoso_crdt::types::CausalMap<
-                            ::kyoso_crdt::types::LwwRegister<#value_ty>,
-                        >,
-                });
-                changes_arms.push(quote! {
-                    {
-                        // Per-key diff. Apply for keys whose component
-                        // value differs from the doc; Remove for keys
-                        // present in the doc but not in the component.
-                        for (k, v) in self.#component_ident.iter() {
-                            let key_str: &::core::primitive::str = k.as_ref();
-                            let doc_value = current.#field_schema_ident
-                                .get(key_str)
-                                .and_then(|reg| reg.get());
-                            let needs_apply = match doc_value {
-                                ::core::option::Option::Some(cur) => cur != v,
-                                ::core::option::Option::None => true,
-                            };
-                            if needs_apply {
-                                out.push(
-                                    #schema_mut_ident::#variant_ident(
-                                        ::kyoso_crdt::types::MapMut::Apply {
-                                            key: ::core::clone::Clone::clone(k),
-                                            mutation: ::kyoso_crdt::types::LwwMut::Set(
-                                                ::core::clone::Clone::clone(v),
-                                            ),
-                                        },
-                                    ),
-                                );
-                            }
-                        }
-                        for (doc_key, _) in current.#field_schema_ident.iter() {
-                            if !self.#component_ident.contains_key(doc_key.as_str()) {
-                                out.push(
-                                    #schema_mut_ident::#variant_ident(
-                                        ::kyoso_crdt::types::MapMut::Remove {
-                                            key: ::core::clone::Clone::clone(doc_key),
-                                        },
-                                    ),
-                                );
-                            }
-                        }
-                    }
-                });
-                write_back_arms.push(quote! {
-                    {
-                        // Rebuild the component's map from the
-                        // server-confirmed schema state. Keys whose
-                        // LwwRegister is bottom (no value yet) are
-                        // skipped; this matches the semantics of an
-                        // unobserved key in the original component.
-                        self.#component_ident = schema.#field_schema_ident
-                            .iter()
-                            .filter_map(|(k, reg)| {
-                                reg.get().map(|v| {
-                                    (
-                                        ::core::clone::Clone::clone(k),
-                                        ::core::clone::Clone::clone(v),
-                                    )
-                                })
-                            })
-                            .collect();
-                    }
-                });
+                quote! {
+                    ::kyoso_crdt::types::CausalMap<
+                        ::kyoso_crdt::types::LwwRegister<#value_ty>,
+                    >
+                }
             }
             FieldCrdtKind::Nested => {
-                // Field type must implement `SchemaSync`. The schema-
-                // side type is the inner type's own schema struct.
-                schema_struct_fields.push(quote! {
-                    #vis #field_schema_ident:
-                        <#ty as ::kyoso_graph_sync::SchemaSync>::Schema,
-                });
-                // Delegate to the inner type's own changes_against and
-                // wrap each emitted mutation in this field's variant.
-                changes_arms.push(quote! {
-                    {
-                        for inner_mut in
-                            ::kyoso_graph_sync::SchemaSync::changes_against(
-                                &self.#component_ident,
-                                &current.#field_schema_ident,
-                            )
-                        {
-                            out.push(
-                                #schema_mut_ident::#variant_ident(inner_mut),
-                            );
-                        }
-                    }
-                });
-                write_back_arms.push(quote! {
-                    {
-                        ::kyoso_graph_sync::SchemaSync::write_back(
-                            &mut self.#component_ident,
-                            &schema.#field_schema_ident,
-                        );
-                    }
-                });
+                // Field type must itself implement `SchemaSync`; its
+                // schema struct is the schema-side type. `derive(SchemaSync)`
+                // emits `impl SchemaField<T> for <T as SchemaSync>::Schema`,
+                // so the delegation below resolves like any other field.
+                quote! { <#ty as ::kyoso_graph_sync::SchemaSync>::Schema }
             }
             FieldCrdtKind::Sequence => {
                 // `String` → `Sequence<char>`; `Vec<T>` → `Sequence<T>`.
-                // Other field shapes are rejected at expansion time.
-                let container = analyze_sequence_field(ty)?;
-                let (elem_ty, component_iter, write_back_collect) = match container {
-                    SequenceContainer::String => (
-                        quote! { ::core::primitive::char },
-                        quote! { self.#component_ident.chars() },
-                        quote! {
-                            schema.#field_schema_ident
-                                .iter()
-                                .into_iter()
-                                .copied()
-                                .collect::<::std::string::String>()
-                        },
-                    ),
-                    SequenceContainer::Vec(elem) => (
-                        quote! { #elem },
-                        quote! { self.#component_ident.iter().cloned() },
-                        quote! {
-                            schema.#field_schema_ident
-                                .iter()
-                                .into_iter()
-                                .cloned()
-                                .collect::<::std::vec::Vec<#elem>>()
-                        },
-                    ),
+                let elem_ty = match analyze_sequence_field(ty)? {
+                    SequenceContainer::String => quote! { ::core::primitive::char },
+                    SequenceContainer::Vec(elem) => quote! { #elem },
                 };
-                schema_struct_fields.push(quote! {
-                    #vis #field_schema_ident:
-                        ::kyoso_crdt::types::Sequence<#elem_ty>,
-                });
-                changes_arms.push(quote! {
-                    {
-                        // Materialize doc-side as Vec<elem> for indexed
-                        // diff. `Sequence::iter()` already returns
-                        // `Vec<&T>`, so we just clone-collect.
-                        let doc_view: ::std::vec::Vec<#elem_ty> =
-                            current.#field_schema_ident
-                                .iter()
-                                .into_iter()
-                                .cloned()
-                                .collect();
-                        let component_view = #component_iter;
-                        for inner_mut in ::kyoso_sync::sequence_diff::<
-                            #elem_ty, _, _,
-                        >(doc_view, component_view) {
-                            out.push(
-                                #schema_mut_ident::#variant_ident(inner_mut),
-                            );
-                        }
-                    }
-                });
-                write_back_arms.push(quote! {
-                    self.#component_ident = #write_back_collect;
-                });
+                quote! { ::kyoso_crdt::types::Sequence<#elem_ty> }
             }
             FieldCrdtKind::With(with_ty) => {
                 // User-named schema type. Must impl
-                // `kyoso_sync::SchemaField<Component = <field-type>>`.
-                // The `Component = #ty` constraint is enforced at the
-                // call sites via type inference: `changes_against`
-                // takes `&Self::Component` and `project_to` takes
-                // `&mut Self::Component`, so a mismatch surfaces as a
-                // compile-time type error.
-                schema_struct_fields.push(quote! {
-                    #vis #field_schema_ident: #with_ty,
-                });
-                changes_arms.push(quote! {
-                    {
-                        for inner_mut in
-                            <#with_ty as ::kyoso_graph_sync::SchemaField>::changes_against(
-                                &current.#field_schema_ident,
-                                &self.#component_ident,
-                            )
-                        {
-                            out.push(
-                                #schema_mut_ident::#variant_ident(inner_mut),
-                            );
-                        }
-                    }
-                });
-                write_back_arms.push(quote! {
-                    {
-                        <#with_ty as ::kyoso_graph_sync::SchemaField>::project_to(
-                            &schema.#field_schema_ident,
-                            &mut self.#component_ident,
-                        );
-                    }
-                });
+                // `kyoso_graph_sync::SchemaField<#ty>`. A `Component`
+                // mismatch surfaces as a compile-time type error at the
+                // delegation call sites below.
+                quote! { #with_ty }
             }
-        }
+        };
+
+        schema_struct_fields.push(quote! {
+            #vis #field_schema_ident: #schema_field_ty,
+        });
+        // Outbound: diff the component field against the doc-side state.
+        // `default_expr` is the echo-guard baseline — used by LWW,
+        // ignored by additive CRDTs.
+        changes_arms.push(quote! {
+            out.extend(
+                <#schema_field_ty as ::kyoso_graph_sync::SchemaField<#ty>>::diff(
+                    &doc.#field_schema_ident,
+                    &self.#component_ident,
+                    &#default_expr,
+                )
+                .into_iter()
+                .map(#schema_mut_ident::#variant_ident),
+            );
+        });
+        // Inbound: project the doc-side state back onto the component.
+        write_back_arms.push(quote! {
+            <#schema_field_ty as ::kyoso_graph_sync::SchemaField<#ty>>::project_to(
+                &schema.#field_schema_ident,
+                &mut self.#component_ident,
+            );
+        });
     }
 
     Ok(quote! {
@@ -512,16 +268,13 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             type Schema = #schema_ident;
             const SCHEMA_NAME: &'static str = #schema_name;
 
-            fn changes_against(
+            fn diff(
                 &self,
-                current: &Self::Schema,
-            ) -> ::std::vec::Vec<
-                <Self::Schema as ::kyoso_crdt::Crdt>::Mutation,
-            > {
-                // `default` is referenced by LWW field arms via the
-                // `#[crdt(default = ...)]` fallback expression. May be
-                // unused if every field is non-LWW or has an explicit
-                // override.
+                doc: &Self::Schema,
+            ) -> ::kyoso_graph_sync::SchemaMutations<Self> {
+                // `default` is referenced by each field's echo-guard
+                // baseline (`&default.<field>`). May be unused if every
+                // field carries an explicit `#[crdt(default = ...)]`.
                 #[allow(unused_variables)]
                 let default = <Self as ::core::default::Default>::default();
                 let mut out = ::std::vec::Vec::new();
@@ -531,6 +284,27 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
             fn write_back(&mut self, schema: &Self::Schema) {
                 #( #write_back_arms )*
+            }
+        }
+
+        // Lets `#component_ident` be embedded as a `#[crdt(nested)]` field
+        // of another `SchemaSync` component: the parent delegates through
+        // `SchemaField` exactly as it does for primitive CRDT fields.
+        impl ::kyoso_graph_sync::SchemaField<#component_ident> for #schema_ident {
+            fn diff(
+                &self,
+                component: &#component_ident,
+                _baseline: &#component_ident,
+            ) -> ::std::vec::Vec<<Self as ::kyoso_crdt::Crdt>::Mutation> {
+                <#component_ident as ::kyoso_graph_sync::SchemaSync>::diff(
+                    component, self,
+                )
+            }
+
+            fn project_to(&self, component: &mut #component_ident) {
+                <#component_ident as ::kyoso_graph_sync::SchemaSync>::write_back(
+                    component, self,
+                );
             }
         }
     })
@@ -556,8 +330,7 @@ enum FieldCrdtKind {
     Sequence,
     /// `#[crdt(with = "Type")]` — schema-side type is the user-named
     /// `Type`, which must implement
-    /// [`kyoso_sync::SchemaField`](../kyoso_sync/trait.SchemaField.html)
-    /// with `Component = <field-type>`.
+    /// [`kyoso_graph_sync::SchemaField`] over the component field type.
     With(Type),
 }
 
@@ -792,12 +565,10 @@ fn extract_map_value_type(ty: &Type) -> syn::Result<&Type> {
 
 /// Container shape detected for a `#[crdt(sequence)]` field.
 enum SequenceContainer<'a> {
-    /// `String` — schema element type is `char`; component iter is
-    /// `chars()`; write-back collects to `String`.
+    /// `String` — schema element type is `char`.
     String,
     /// `Vec<T>` — schema element type is `T` borrowed from the field's
-    /// generic; component iter is `iter().cloned()`; write-back
-    /// collects to `Vec<T>`.
+    /// generic.
     Vec(&'a Type),
 }
 
@@ -932,4 +703,3 @@ fn to_pascal_case(s: &str) -> String {
     }
     out
 }
-

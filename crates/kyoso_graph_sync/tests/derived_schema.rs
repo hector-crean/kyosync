@@ -292,7 +292,7 @@ fn schema_name_attribute_is_honored() {
 fn default_component_against_bottom_doc_emits_nothing() {
     let component = Derived::default();
     let bottom = <DerivedSchema as kyoso_crdt::Lattice>::bottom();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert!(
         mutations.is_empty(),
         "expected zero mutations from default-vs-bottom; got {} mutations",
@@ -329,7 +329,7 @@ fn skipped_fields_do_not_appear_in_schema() {
         synced: 7,
         local_only: 99,
     };
-    let mutations = a.changes_against(&bottom);
+    let mutations = a.diff(&bottom);
     assert_eq!(
         mutations.len(),
         1,
@@ -371,12 +371,12 @@ fn renamed_fields_use_renamed_identifier_in_schema() {
         h: kyoso_crdt::types::LwwRegister::default(),
     };
 
-    // changes_against still reads from `self.width` / `self.height` on
+    // diff still reads from `self.width` / `self.height` on
     // the component side; the rename only affects the schema-side
     // identifier and the wire path.
     let component = Renamed { width: 1.0, height: 2.0 };
     let bottom = RenamedSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert_eq!(
         mutations.len(),
         2,
@@ -405,7 +405,7 @@ fn custom_default_expression_is_used_as_echo_guard() {
     // Component value matching the custom default → no mutation emitted.
     let matches_custom_default = DefaultsCustom { sentinel: 42 };
     let bottom = DefaultsCustomSchema::default();
-    let mutations = matches_custom_default.changes_against(&bottom);
+    let mutations = matches_custom_default.diff(&bottom);
     assert!(
         mutations.is_empty(),
         "component value `42` matches the custom default `42`; expected no mutations",
@@ -414,7 +414,7 @@ fn custom_default_expression_is_used_as_echo_guard() {
     // Component value differing from the custom default → mutation
     // emitted.
     let differs = DefaultsCustom { sentinel: 0 };
-    let mutations = differs.changes_against(&bottom);
+    let mutations = differs.diff(&bottom);
     assert_eq!(
         mutations.len(),
         1,
@@ -455,7 +455,7 @@ fn or_set_default_against_bottom_emits_nothing() {
     // Empty Vec vs empty OrSet → no add/remove deltas.
     let component = Tagged::default();
     let bottom = TaggedSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert!(mutations.is_empty(), "default empty Vec should not emit");
 }
 
@@ -465,7 +465,7 @@ fn or_set_emits_adds_for_new_elements() {
         tags: vec!["draft".into(), "urgent".into()],
     };
     let bottom = TaggedSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert_eq!(mutations.len(), 2, "two new elements → two Add mutations");
 }
 
@@ -528,7 +528,7 @@ struct Counted {
 fn counter_zero_against_bottom_emits_nothing() {
     let component = Counted::default();
     let bottom = CountedSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert!(
         mutations.is_empty(),
         "edits=0 against bottom (value=0) should not emit",
@@ -539,7 +539,7 @@ fn counter_zero_against_bottom_emits_nothing() {
 fn counter_emits_inc_for_positive_diff() {
     let component = Counted { edits: 5 };
     let bottom = CountedSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert_eq!(mutations.len(), 1, "one Inc mutation expected");
 }
 
@@ -601,7 +601,7 @@ fn combined_skip_rename_default_compose() {
         flag: false,
     };
     let bottom = CombinedSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert!(
         mutations.is_empty(),
         "all three fields are at their (custom or natural) defaults; \
@@ -615,7 +615,7 @@ fn combined_skip_rename_default_compose() {
         name: "alpha".into(),
         flag: false,
     };
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert_eq!(mutations.len(), 1, "only `name` differs from custom default");
 }
 
@@ -639,7 +639,7 @@ struct Mapped {
 fn map_default_against_bottom_emits_nothing() {
     let component = Mapped::default();
     let bottom = MappedSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert!(mutations.is_empty(), "default empty HashMap should not emit");
 }
 
@@ -650,7 +650,7 @@ fn map_emits_apply_for_new_keys() {
     props.insert("size".into(), "large".into());
     let component = Mapped { properties: props };
     let bottom = MappedSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert_eq!(mutations.len(), 2, "two new keys → two Apply mutations");
 }
 
@@ -717,7 +717,7 @@ struct Inner {
 /// Outer component embedding `Inner` via `#[crdt(nested)]`. The schema
 /// generated for `Outer` carries a `inner: InnerSchema` field; mutations
 /// to `Outer.inner` recurse through the inner schema's own
-/// `changes_against`.
+/// `diff`.
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "Outer")]
@@ -731,7 +731,7 @@ struct Outer {
 fn nested_default_against_bottom_emits_nothing() {
     let component = Outer::default();
     let bottom = OuterSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert!(mutations.is_empty(), "default Outer should not emit");
 }
 
@@ -745,7 +745,7 @@ fn nested_emits_inner_field_mutations_wrapped_in_outer_variant() {
         },
     };
     let bottom = OuterSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     // Three diffs: outer.name + inner.label + inner.weight.
     assert_eq!(
         mutations.len(),
@@ -822,7 +822,7 @@ struct TextDoc {
 fn sequence_string_default_against_bottom_emits_nothing() {
     let component = TextDoc::default();
     let bottom = TextDocSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert!(mutations.is_empty(), "default empty String should not emit");
 }
 
@@ -830,7 +830,7 @@ fn sequence_string_default_against_bottom_emits_nothing() {
 fn sequence_string_emits_one_insert_per_character() {
     let component = TextDoc { body: "hi".into() };
     let bottom = TextDocSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     // Two characters → two InsertAt mutations.
     assert_eq!(mutations.len(), 2);
 }
@@ -908,7 +908,7 @@ struct OrderedList {
 fn sequence_vec_emits_inserts_for_appended_items() {
     let component = OrderedList { items: vec![1, 2, 3] };
     let bottom = OrderedListSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert_eq!(mutations.len(), 3);
 }
 
@@ -973,7 +973,7 @@ struct WithBuiltin {
 fn with_built_in_lww_default_against_bottom_emits_nothing() {
     let component = WithBuiltin::default();
     let bottom = WithBuiltinSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert!(mutations.is_empty(), "default value should not emit");
 }
 
@@ -981,7 +981,7 @@ fn with_built_in_lww_default_against_bottom_emits_nothing() {
 fn with_built_in_lww_emits_for_non_default() {
     let component = WithBuiltin { score: 99 };
     let bottom = WithBuiltinSchema::default();
-    let mutations = component.changes_against(&bottom);
+    let mutations = component.diff(&bottom);
     assert_eq!(mutations.len(), 1, "non-default value should emit one mutation");
 }
 
@@ -1034,7 +1034,7 @@ fn build_with_builtin_app(server: SocketAddr, room: &str) -> App {
 // For the test we use a deliberately weird projection — the schema
 // stores `value` and the component holds `2 * value`. This proves
 // that the macro really delegates to `SchemaField`'s `project_to` /
-// `changes_against` rather than relying on equality of the raw
+// `diff` rather than relying on equality of the raw
 // component value.
 
 mod custom_with {
@@ -1052,7 +1052,7 @@ mod custom_with {
 
     /// Schema-side type. Stores the "halved" value via an inner
     /// `LwwRegister<u32>`. `SchemaField::project_to` doubles the stored
-    /// value when writing back to the component; `changes_against`
+    /// value when writing back to the component; `diff`
     /// halves the component's value when computing the diff.
     #[derive(Clone, Debug, Default, PartialEq)]
     pub struct HalvedSchema {
@@ -1125,22 +1125,22 @@ mod custom_with {
         }
     }
 
-    impl kyoso_graph_sync::SchemaField for HalvedSchema {
-        type Component = DoubledValue;
-        fn changes_against(
+    impl kyoso_graph_sync::SchemaField<DoubledValue> for HalvedSchema {
+        fn diff(
             &self,
-            component: &Self::Component,
+            component: &DoubledValue,
+            _baseline: &DoubledValue,
         ) -> Vec<<Self as Crdt>::Mutation> {
             // The schema stores half of the component's value.
             let target_halved = component.0 / 2;
-            let baseline = self.inner.get().copied().unwrap_or_default();
-            if baseline != target_halved {
+            let stored = self.inner.get().copied().unwrap_or_default();
+            if stored != target_halved {
                 vec![HalvedMut(LwwMut::Set(target_halved))]
             } else {
                 Vec::new()
             }
         }
-        fn project_to(&self, component: &mut Self::Component) {
+        fn project_to(&self, component: &mut DoubledValue) {
             if let Some(v) = self.inner.get() {
                 component.0 = v * 2;
             }
@@ -1161,7 +1161,7 @@ mod custom_with {
             doubled: DoubledValue(10),
         };
         let bottom = ContainerSchema::default();
-        let mutations = component.changes_against(&bottom);
+        let mutations = component.diff(&bottom);
         assert_eq!(
             mutations.len(),
             1,

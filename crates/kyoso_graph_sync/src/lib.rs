@@ -39,7 +39,7 @@ pub use engine::ClientSyncEngine;
 pub use index::EntityCrdtIndex;
 pub use plugin::{GraphSyncPlugin, RemoteOpApplied, Syncable};
 pub use schema_sync::{
-    SchemaDoc, SchemaField, SchemaSync, SchemaSyncedEdgeComponentPlugin,
+    SchemaDoc, SchemaField, SchemaMutations, SchemaSync, SchemaSyncedEdgeComponentPlugin,
     SchemaSyncedNodeComponentPlugin,
 };
 
