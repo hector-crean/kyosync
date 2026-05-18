@@ -20,6 +20,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::context::SubDot;
+use crate::id::CrdtId;
 
 /// Path into a node or edge schema, used to dispatch a [`WireDelta`] to
 /// the embedded CRDT it targets.
@@ -143,6 +144,16 @@ pub enum WireDelta {
     /// Map remove. `observed` carries the sub-dots of every concurrent
     /// add this op witnessed; only those entries are removed.
     MapRemove { key: PathSegment, observed: Vec<SubDot> },
+
+    /// Tree move: re-parent `child` under `new_parent` (`None` makes it
+    /// a root) at sibling-ordering `position`. The move's linearisation
+    /// timestamp is the outer op's `GlobalSeq` — not carried here, per
+    /// the no-timestamps-in-the-delta rule above.
+    TreeMove {
+        child: CrdtId,
+        new_parent: Option<CrdtId>,
+        position: String,
+    },
 }
 
 impl WireDelta {

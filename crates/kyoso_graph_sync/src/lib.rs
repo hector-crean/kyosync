@@ -1,49 +1,62 @@
 //! Graph-specific Bevy ↔ CRDT bridge.
 //!
-//! Sits on top of [`kyoso_sync::SyncTransportPlugin`] and registers the
-//! graph model with the multi-model transport. Owns the graph
-//! [`ClientSyncEngine`], the structural detection systems, the inbound
-//! projector, the per-category edge dispatch ([`SyncedEdgeCategoryPlugin`]),
-//! and the typed schema sync framework
-//! ([`SchemaSyncedComponentPlugin`] etc.).
+//! Sits on top of [`kyoso_sync::SyncTransportPlugin`] and registers
+//! the graph model with the multi-model transport. The plugin itself
+//! is generics-free: graph **structure** (which nodes / edges exist,
+//! which endpoints each edge connects) is expressed as two normal
+//! [`SchemaSync`](kyoso_sync::SchemaSync) components —
+//! [`NodePresence`] and [`EdgeEndpoints`] — that ride the standard
+//! [`SchemaSyncedComponentPlugin`](kyoso_sync::SchemaSyncedComponentPlugin)
+//! pipeline. Per-node / per-edge custom components ([`bevy::prelude::Transform`],
+//! the consumer's own [`derive(SchemaSync)`](kyoso_sync::SchemaSync)
+//! components) layer on the same way.
 //!
-//! Add [`SyncTransportPlugin`](kyoso_sync::SyncTransportPlugin) first,
-//! then [`GraphSyncPlugin`]:
+//! Cycle / dangle / cascade enforcement is the consumer's
+//! responsibility at the ECS command layer — see
+//! `kyoso_graph::queries::GraphQuery::would_create_cycle`.
+//!
+//! ## Wiring
 //!
 //! ```ignore
 //! use bevy::prelude::*;
 //! use kyoso_sync::SyncTransportPlugin;
-//! use kyoso_graph_sync::GraphSyncPlugin;
+//! use kyoso_graph_sync::{
+//!     GraphSyncPlugin, NodeTarget, NodePresence, EdgeEndpoints,
+//!     SchemaSyncedComponentPlugin,
+//! };
 //!
 //! #[derive(Component, Default, Debug, Clone)]
+//! #[require(NodePresence)]
 //! struct SceneNode;
-//! #[derive(Component, Default, Debug, Clone, Copy)]
+//!
+//! #[derive(Component, Default, Debug, Clone)]
+//! #[require(EdgeEndpoints)]
 //! struct SceneEdge;
 //!
 //! App::new()
-//!     .add_plugins(SyncTransportPlugin::new("ws://localhost:7878/ws", "demo"))
-//!     .add_plugins(GraphSyncPlugin::<SceneNode, SceneEdge>::default())
+//!     .add_plugins(SyncTransportPlugin::new("ws://...", "demo"))
+//!     .add_plugins(GraphSyncPlugin)
+//!     .add_plugins(SchemaSyncedComponentPlugin::<NodeTarget, Transform>::default())
 //!     .run();
 //! ```
 
-pub mod category;
 pub mod engine;
 pub mod index;
 pub mod plugin;
 pub mod schema_sync;
+pub mod structural;
 
-pub use category::{EdgeCategoryMarker, EdgeCategoryProjectors, SyncedEdgeCategoryPlugin};
 pub use engine::ClientSyncEngine;
 pub use index::EntityCrdtIndex;
-pub use plugin::{GraphSyncPlugin, RemoteOpApplied, Syncable};
-// Graph providers for the `kyoso_sync` component-sync pipeline.
+pub use plugin::{GraphOp, GraphSyncPlugin, RemoteOpApplied};
 pub use schema_sync::{EdgeTarget, NodeTarget};
+pub use structural::{EdgeEndpoints, EdgePending, NodePresence};
 
-// The model-agnostic typed-schema trait layer (trait + derive macro),
-// the built-in `SchemaSync` impls, and the whole component-sync pipeline
-// (`SchemaSyncedComponentPlugin`, `SchemaDoc`, `SchemaTarget`, `SyncSet`)
-// moved to `kyoso_sync`. Re-exported here so existing
-// `kyoso_graph_sync::*` imports keep working.
+// Re-export the model-agnostic typed-schema layer + the
+// component-sync pipeline so consumers only need
+// `kyoso_graph_sync::*` for graph apps. Everything graph-specific
+// lives here; everything model-agnostic lives in `kyoso_sync` and
+// is re-exported.
 pub use kyoso_sync::{
     SchemaDoc, SchemaField, SchemaMutations, SchemaSync, SchemaSyncedComponentPlugin,
     SchemaTarget, SyncSet, TargetKind, TransformSchema,

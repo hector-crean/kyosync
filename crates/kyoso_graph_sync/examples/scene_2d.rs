@@ -39,7 +39,9 @@ use bevy::prelude::*;
 use kyoso_camera::controller::DefaultCameraSettings;
 use kyoso_drag::two_d::{DragTransform2dPlugin, Draggable2d};
 use kyoso_polyline::prelude::*;
-use kyoso_graph_sync::{GraphSyncPlugin, NodeTarget, SchemaSyncedComponentPlugin};
+use kyoso_graph_sync::{
+    EdgeEndpoints, GraphSyncPlugin, NodePresence, NodeTarget, SchemaSyncedComponentPlugin,
+};
 use kyoso_sync::SyncStatus;
 
 // ---------------------------------------------------------------------------
@@ -52,7 +54,7 @@ use kyoso_sync::SyncStatus;
 /// component on the same entity.
 #[derive(Component, Default, Debug, Clone, Reflect)]
 #[reflect(Component, Default)]
-#[require(Transform, Visibility)]
+#[require(Transform, Visibility, NodePresence)]
 struct GraphNode {
     radius: f32,
     /// Hex-style RGB so reflection-based serde sees a flat struct, not
@@ -66,6 +68,7 @@ struct GraphNode {
 /// topology (already part of `kyoso_graph`).
 #[derive(Component, Default, Debug, Clone, Reflect)]
 #[reflect(Component, Default)]
+#[require(EdgeEndpoints)]
 struct GraphEdge {
     line_width: f32,
     color_rgb: [f32; 3],
@@ -94,7 +97,7 @@ fn main() {
     app.insert_resource(DefaultCameraSettings::default());
     app.add_plugins((
         DragTransform2dPlugin::<DefaultCameraSettings>(DefaultCameraSettings::default()),
-        GraphSyncPlugin::<GraphNode, GraphEdge>::new(url, room),
+        GraphSyncPlugin::new(url, room),
         SchemaSyncedComponentPlugin::<NodeTarget, Transform>::default(),
     ));
 

@@ -16,15 +16,19 @@
 //! - [`Sequence`] — **naive `Vec`-backed stub**, suitable for
 //!   single-writer fields. Concurrent edits will lose data; the real
 //!   Fugue / yjsmod implementation is a future phase.
+//! - [`MoveTree`] — replicated parent/position for a forest of nodes;
+//!   a server-linearised move log folded with a cycle-skip.
 
 pub mod lww;
 pub mod or_set;
 pub mod pn_counter;
 pub mod causal_map;
 pub mod sequence;
+pub mod move_tree;
 
 pub use causal_map::{CausalMap, MapDelta, MapMut};
 pub use lww::{LwwDelta, LwwMut, LwwRegister};
+pub use move_tree::{MoveNode, MoveTree, MoveTreeDelta};
 pub use or_set::{OrSet, OrSetDelta, OrSetMut};
 pub use pn_counter::{PnCounter, PnDelta, PnMut};
 pub use sequence::{Sequence, SequenceDelta, SequenceMut};

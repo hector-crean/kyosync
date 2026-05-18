@@ -279,9 +279,17 @@ fn ensure_schema_slots<X, C>(
     <C::Schema as Crdt>::Delta: IntoWireOp,
     <C::Schema as Crdt>::Mutation: Send + Sync + 'static,
 {
+    // Bypass change detection while creating placeholder slots —
+    // otherwise every frame's deref_mut would flip `doc.is_changed()`
+    // to true, forcing [`project_to_components`] to write back to
+    // every bound entity (and the resulting `Mut<C>` mark trips a
+    // redundant Changed-without-real-change in the next frame's
+    // [`detect_local_changes`]). Genuine apply_property mutations
+    // still flip `is_changed` the normal way.
+    let raw = doc.bypass_change_detection();
     for entity in has_c.iter() {
         if let Some(id) = X::id_for(&index, entity) {
-            doc.ensure_schema(id);
+            raw.ensure_schema(id);
         }
     }
 }
@@ -319,13 +327,21 @@ fn detect_local_changes<X, C>(
         // the doc already holds non-default state. User-spawned entities
         // are also `is_added()` but the doc is still at lattice bottom,
         // so their initial values do replicate.
-        if component.is_added() && *current != empty_schema {
+        let same = *current == empty_schema;
+        if component.is_added() && !same {
             continue;
         }
         let mutations = component.diff(current);
         if mutations.is_empty() {
             continue;
         }
+        eprintln!(
+            "[detect_local_changes schema={}] entity={entity:?} id={id:?} is_added={} doc_is_empty_default={} mutations={}",
+            C::SCHEMA_NAME,
+            component.is_added(),
+            same,
+            mutations.len()
+        );
         let mut throwaway = current.clone();
         for mutation in mutations {
             let op_id = X::mint_id(&mut out);
@@ -362,13 +378,22 @@ fn apply_remote_changes<X, C>(
             continue;
         }
         let inner_path = Path(prop.path.0[1..].to_vec());
-        if let Err(e) = doc.apply_property(
+        let result = doc.apply_property(
             prop.op_id,
             prop.seq,
             prop.target,
             &inner_path,
             prop.delta.clone(),
-        ) {
+        );
+        eprintln!(
+            "[apply_remote_changes schema={}] target={:?} inner_path={:?} ok={} doc_changed={}",
+            C::SCHEMA_NAME,
+            prop.target,
+            inner_path,
+            result.is_ok(),
+            doc.is_changed(),
+        );
+        if let Err(e) = result {
             tracing::warn!(?e, schema = %C::SCHEMA_NAME, "schema apply rejected op");
         }
     }
@@ -385,13 +410,28 @@ fn project_to_components<X, C>(
     <C::Schema as Crdt>::Delta: IntoWireOp,
     <C::Schema as Crdt>::Mutation: Send + Sync + 'static,
 {
-    if !doc.is_changed() {
+    let pairs = X::pairs(&index);
+    let pairs_len = pairs.len();
+    let changed = doc.is_changed();
+    eprintln!(
+        "[project_to_components_entry schema={}] doc_changed={} pairs_len={} index_ptr={:p} pairs_ptr={:p}",
+        C::SCHEMA_NAME,
+        changed,
+        pairs_len,
+        &*index,
+        pairs
+    );
+    if !changed {
         return;
     }
     for (entity, id) in X::pairs(&index).iter() {
         let Some(schema) = doc.schema(*id) else {
             continue;
         };
+        eprintln!(
+            "[project_to_components schema={}] entity={entity:?} id={id:?}",
+            C::SCHEMA_NAME
+        );
         match components.get_mut(*entity) {
             Ok(mut component) => component.write_back(schema),
             Err(_) => {

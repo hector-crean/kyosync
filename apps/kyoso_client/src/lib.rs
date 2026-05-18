@@ -32,7 +32,6 @@ use kyoso_camera::controller::DefaultCameraSettings;
 use kyoso_drag::two_d::DragTransform2dPlugin;
 use kyoso_figma::KyosoFigmaPlugin;
 use kyoso_polyline::prelude::PolylinePlugin;
-use kyoso_graph_sync::SyncedEdgeCategoryPlugin;
 
 pub mod handlers;
 pub mod msg;
@@ -68,29 +67,13 @@ impl Plugin for AppPlugin {
                 server_url: self.server_url.clone(),
                 room: self.room.clone(),
             },
-            // The weave side: per-kind typed-edge categories. Each
-            // plugin registers an inbound projector and an outbound
-            // detection system for its marker.
-            SyncedEdgeCategoryPlugin::<
-                kyoso_figma::FigmaNode,
-                kyoso_figma::FigmaEdge,
-                ReferenceMarker,
-            >::default(),
-            SyncedEdgeCategoryPlugin::<
-                kyoso_figma::FigmaNode,
-                kyoso_figma::FigmaEdge,
-                DependencyMarker,
-            >::default(),
-            SyncedEdgeCategoryPlugin::<
-                kyoso_figma::FigmaNode,
-                kyoso_figma::FigmaEdge,
-                CommentMarker,
-            >::default(),
-            SyncedEdgeCategoryPlugin::<
-                kyoso_figma::FigmaNode,
-                kyoso_figma::FigmaEdge,
-                AnnotationMarker,
-            >::default(),
+            // Per-kind typed-edge markers (Reference / Dependency /
+            // Comment / Annotation) are local-only after the slim
+            // `GraphSyncPlugin` refactor — the structural edge presence
+            // + endpoints replicate, but category markers do not.
+            // Apps that need cross-peer category sync should derive
+            // `SchemaSync` on a category-bearing component and add a
+            // `SchemaSyncedComponentPlugin::<EdgeTarget, _>`.
             ToolsPlugin,
             presence::PresencePlugin,
         ));

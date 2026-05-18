@@ -53,12 +53,14 @@ pub use plugin::KyosoCircuitPlugin;
 /// entity carries.
 #[derive(Component, Default, Clone, Debug, PartialEq, Eq, Reflect)]
 #[reflect(Component, Default)]
+#[require(kyoso_graph_sync::NodePresence)]
 pub struct CircuitNode;
 
-/// Zero-sized marker: every kyoso_circuit edge entity carries this. Used
-/// as the `E` parameter to `kyoso_graph_sync::GraphSyncPlugin`. Every
-/// circuit edge also carries exactly one of the per-kind markers from
-/// [`edge`] so the per-category dispatch can route it correctly.
+/// Zero-sized marker: every kyoso_circuit edge entity carries this.
+/// Every circuit edge also carries exactly one of the per-kind markers
+/// from [`edge`] (local-only since the slim `GraphSyncPlugin` refactor —
+/// see `edge.rs` module docs).
 #[derive(Component, Default, Clone, Debug, PartialEq, Eq, Reflect)]
 #[reflect(Component, Default)]
+#[require(kyoso_graph_sync::EdgeEndpoints)]
 pub struct CircuitEdge;

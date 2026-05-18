@@ -22,8 +22,6 @@
 //!   used by the polyline material in `scene.rs`.
 
 use bevy::prelude::*;
-use kyoso_graph_crdt::EdgeCategory;
-use kyoso_graph_sync::EdgeCategoryMarker;
 use serde::{Deserialize, Serialize};
 
 /// User-facing kinds of cross-frame relationship.
@@ -83,23 +81,17 @@ impl WeaveEdgeKind {
 // ---------------------------------------------------------------------------
 
 macro_rules! weave_marker {
-    ($name:ident, $category_str:literal) => {
+    ($name:ident) => {
         #[derive(Component, Default, Clone, Debug, PartialEq, Eq, Reflect)]
         #[reflect(Component, Default)]
         pub struct $name;
-
-        impl EdgeCategoryMarker for $name {
-            fn category() -> EdgeCategory {
-                EdgeCategory::Custom(::std::string::String::from($category_str))
-            }
-        }
     };
 }
 
-weave_marker!(ReferenceMarker, "weave-reference");
-weave_marker!(DependencyMarker, "weave-dependency");
-weave_marker!(CommentMarker, "weave-comment");
-weave_marker!(AnnotationMarker, "weave-annotation");
+weave_marker!(ReferenceMarker);
+weave_marker!(DependencyMarker);
+weave_marker!(CommentMarker);
+weave_marker!(AnnotationMarker);
 
 /// Insert the right marker component for `kind` onto an entity. Used
 /// by the Connect tool when spawning a typed edge.

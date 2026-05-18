@@ -1,132 +1,119 @@
-//! Graph CRDT Bevy plugin.
+//! Slim, generics-free graph sync Bevy plugin.
 //!
-//! Sits on top of [`kyoso_sync::SyncTransportPlugin`]:
+//! Sits on top of [`kyoso_sync::SyncTransportPlugin`] and registers
+//! the graph model. Express graph structure as two normal
+//! [`SchemaSync`](kyoso_sync::SchemaSync) components —
+//! [`NodePresence`](crate::structural::NodePresence) and
+//! [`EdgeEndpoints`](crate::structural::EdgeEndpoints) — which ride
+//! the standard component-sync pipeline. The plugin itself only:
 //!
-//! - Registers [`graph_model()`](kyoso_graph_crdt::graph_model) with
-//!   [`ModelRegistry`](kyoso_sync::ModelRegistry) so the transport's
-//!   initial Hello includes the graph model.
-//! - Inserts a [`ClientSyncEngine`] resource sharing
-//!   [`PeerIdGen`](kyoso_sync::PeerIdGen) so cross-model IDs stay safe.
-//! - Inbound: reads [`WsInbound`](kyoso_sync::WsInbound) Bevy events,
-//!   filters for graph traffic, decodes graph payloads, applies + projects
-//!   them to ECS, and emits [`RemoteOpApplied`] for downstream typed
-//!   schema plugins.
-//! - Outbound: drains [`ClientSyncEngine::drain_pending`], encodes each
-//!   op as bytes, and submits via [`WsBridge`](kyoso_sync::WsBridge).
-//! - Detection: the structural systems
-//!   ([`detect_added_nodes`], [`detect_added_edges`],
-//!   [`detect_tree_moves`], [`detect_removed_nodes`],
-//!   [`detect_removed_edges`]) are unchanged from the pre-transport
-//!   refactor.
-
-use std::fmt::Debug;
-use std::marker::PhantomData;
+//! 1. Wires the `EntityCrdtIndex` resource + the
+//!    [`ClientSyncEngine`] (still used as the shared id source,
+//!    `applied_seq` tracker, and outbound queue).
+//! 2. Drives id assignment on local spawn + tombstone-emit on local
+//!    despawn (via systems in [`crate::structural`]).
+//! 3. Decodes inbound `WsInbound` graph traffic, spawns placeholder
+//!    entities for any unknown `CrdtId`, applies ops to the engine,
+//!    emits [`RemoteOpApplied`] for the typed-schema plugins.
+//! 4. Runs the [`resolve_pending_edges`] system to materialize Bevy
+//!    relationships once both endpoints land.
+//! 5. Drains the engine's pending queue out through the transport.
+//!
+//! ## Wiring
+//!
+//! ```ignore
+//! use bevy::prelude::*;
+//! use kyoso_sync::{SyncTransportPlugin, SchemaSyncedComponentPlugin};
+//! use kyoso_graph_sync::{
+//!     GraphSyncPlugin, NodeTarget, EdgeTarget,
+//!     NodePresence, EdgeEndpoints,
+//! };
+//!
+//! #[derive(Component, Default, Debug, Clone)]
+//! #[require(NodePresence)]
+//! struct MyNode;
+//!
+//! #[derive(Component, Default, Debug, Clone)]
+//! #[require(EdgeEndpoints)]
+//! struct MyEdge;
+//!
+//! App::new()
+//!     .add_plugins((
+//!         SyncTransportPlugin::new("ws://...", "demo"),
+//!         GraphSyncPlugin,
+//!         SchemaSyncedComponentPlugin::<NodeTarget, NodePresence>::default(),
+//!         SchemaSyncedComponentPlugin::<EdgeTarget, EdgeEndpoints>::default(),
+//!         SchemaSyncedComponentPlugin::<NodeTarget, Transform>::default(),
+//!     ))
+//!     .run();
+//! ```
 
 use bevy::prelude::*;
 use kyoso_crdt::{Op, OpaqueRecord, PathSegment};
-use kyoso_graph::components::{EdgeFrom, EdgeTo, IncomingEdges};
-use kyoso_graph::queries::GraphComponent;
-use kyoso_graph::tree::{OrderKey, TreeEdge, TreeParent};
-use kyoso_graph_crdt::{GraphTopologySnapshot, OpKind, graph_model};
+use kyoso_graph_crdt::{OpKind, graph_model};
 use kyoso_sync::{
-    ModelRegistry, PeerIdGen, SchemaHydrators, SyncSet, SyncStatus, TargetKind, WsBridge,
-    WsInbound,
+    ModelRegistry, PeerIdGen, SchemaHydrators, SchemaSyncedComponentPlugin, SyncSet, SyncStatus,
+    TargetKind, WsBridge, WsInbound,
 };
 
-use crate::category::ApplyEdgeCategory;
-use crate::engine::{ClientSyncEngine, EngineSnapshot, ServerSnapshot};
+use crate::engine::{ClientSyncEngine, ServerSnapshot};
 use crate::index::EntityCrdtIndex;
+use crate::structural::{
+    EDGE_ENDPOINTS_SCHEMA, EdgeEndpoints, NODE_PRESENCE_SCHEMA, NodePresence,
+    assign_local_edge_ids, assign_local_node_ids, despawn_tombstoned_edges,
+    despawn_tombstoned_nodes, detect_local_edge_despawn, detect_local_node_despawn,
+    ensure_inbound_entity, hydrate_snapshot_placeholders, resolve_pending_edges,
+};
 
-type GraphOp = Op<OpKind>;
+/// Graph-model alias for the op envelope. The wire payload is
+/// unchanged from the legacy plugin — only the *property* variants
+/// (`SetNodeProperty` / `SetRefEdgeProperty`) get used now, since
+/// node/edge existence travels as `NodePresence` / `EdgeEndpoints`
+/// property ops rather than dedicated structural variants.
+pub type GraphOp = Op<OpKind>;
 
-/// Trait alias for components that can be replicated as graph nodes /
-/// edges. The bound is intentionally minimal: the typed-schema property
-/// pipeline does its own per-field CRDT plumbing, so `Syncable` here
-/// only needs the `GraphComponent + Clone + Debug` shape that the
-/// structural inbound/detection systems rely on.
-pub trait Syncable:
-    GraphComponent<Mutability = bevy::ecs::component::Mutable> + Clone + Debug
-{
-}
-impl<T> Syncable for T where
-    T: GraphComponent<Mutability = bevy::ecs::component::Mutable> + Clone + Debug
-{
-}
-
-/// Emitted once per server-confirmed graph op as soon as the engine has
-/// applied it. Typed plugins
-/// ([`crate::SchemaSyncedComponentPlugin`],
-/// [`crate::SyncedEdgeCategoryPlugin`] projection) subscribe to this
-/// stream to route ops to per-schema [`crate::SchemaDoc<S>`] instances
-/// after the engine's canonical apply has run.
+/// Emitted once per server-confirmed graph op the moment the engine
+/// has applied it. The typed-schema plugins
+/// ([`SchemaSyncedComponentPlugin`]) subscribe to this stream via
+/// their [`SchemaTarget::Inbound`](kyoso_sync::SchemaTarget::Inbound)
+/// to route ops to per-schema [`SchemaDoc`](kyoso_sync::SchemaDoc)
+/// resources after the engine's canonical apply has run.
 #[derive(Message, Event, Clone, Debug)]
 pub struct RemoteOpApplied(pub GraphOp);
 
-/// Graph-model Bevy plugin.
-///
-/// Two ways to add it:
-///
-/// - **Multi-model** (one socket carries graph + comments + …): add
-///   [`SyncTransportPlugin`](kyoso_sync::SyncTransportPlugin) yourself,
-///   then `GraphSyncPlugin::<N, E>::default()`.
-/// - **Single-model** (graph only): use [`Self::new`], which also pulls
-///   in `SyncTransportPlugin` so the connection is set up automatically.
-///   Mirrors [`kyoso_comments_sync::CommentsSyncPlugin::new`].
-///
-/// ```ignore
-/// // Multi-model
-/// App::new()
-///     .add_plugins((
-///         SyncTransportPlugin::new("ws://...", "demo"),
-///         GraphSyncPlugin::<MyNode, MyEdge>::default(),
-///         CommentsSyncPlugin::default(),
-///     ))
-///     .run();
-///
-/// // Single-model graph (transport bundled in)
-/// App::new()
-///     .add_plugins(GraphSyncPlugin::<MyNode, MyEdge>::new("ws://...", "demo"))
-///     .run();
-/// ```
-pub struct GraphSyncPlugin<N, E> {
-    /// When `Some`, this plugin also adds a `SyncTransportPlugin` with
+/// The graph-sync plugin. Generics-free — the graph model is now
+/// defined by the two structural [`SchemaSync`](kyoso_sync::SchemaSync)
+/// components ([`NodePresence`], [`EdgeEndpoints`]) plus whatever
+/// per-node / per-edge user components the app adds with
+/// [`SchemaSyncedComponentPlugin`].
+pub struct GraphSyncPlugin {
+    /// When `Some`, this plugin also adds a
+    /// [`SyncTransportPlugin`](kyoso_sync::SyncTransportPlugin) with
     /// these `(url, room)` parameters during `build` (single-model
     /// convenience). When `None`, the caller is expected to add the
-    /// transport plugin separately (multi-model).
+    /// transport plugin separately (multi-model setup).
     transport: Option<(String, String)>,
-    _phantom: PhantomData<fn() -> (N, E)>,
 }
 
-impl<N, E> Default for GraphSyncPlugin<N, E> {
+impl Default for GraphSyncPlugin {
     fn default() -> Self {
-        Self {
-            transport: None,
-            _phantom: PhantomData,
-        }
+        Self { transport: None }
     }
 }
 
-impl<N, E> GraphSyncPlugin<N, E> {
+impl GraphSyncPlugin {
     /// Single-model convenience constructor. Bundles a
-    /// [`SyncTransportPlugin`](kyoso_sync::SyncTransportPlugin) with
-    /// `url` + `room` during `build`. For multi-model apps prefer
-    /// [`Self::default`] and add the transport plugin yourself.
+    /// [`SyncTransportPlugin`](kyoso_sync::SyncTransportPlugin) so the
+    /// caller doesn't have to add it explicitly.
     pub fn new(url: impl Into<String>, room: impl Into<String>) -> Self {
         Self {
             transport: Some((url.into(), room.into())),
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<N, E> Plugin for GraphSyncPlugin<N, E>
-where
-    N: Syncable,
-    E: Syncable,
-{
+impl Plugin for GraphSyncPlugin {
     fn build(&self, app: &mut App) {
-        // Single-model convenience: pull in the transport plugin if the
-        // caller didn't add one explicitly.
         if let Some((url, room)) = &self.transport {
             if !app.is_plugin_added::<kyoso_sync::SyncTransportPlugin>() {
                 app.add_plugins(kyoso_sync::SyncTransportPlugin::new(
@@ -135,80 +122,83 @@ where
                 ));
             }
         }
-        // Idempotent: SyncTransportPlugin already inserted these, but
-        // GraphSyncPlugin can be added in either order without panicking.
+
+        // Idempotent — SyncTransportPlugin already inserted these.
         app.init_resource::<ModelRegistry>();
         app.init_resource::<PeerIdGen>();
 
-        // Register the graph model so the transport's Hello includes it.
+        // Register the graph model so the transport's Hello announces it.
         app.world_mut()
             .resource_mut::<ModelRegistry>()
             .register(graph_model());
 
-        // Construct the engine sharing the peer-level IdGen handle.
         let peer_ids = app.world().resource::<PeerIdGen>().handle();
         app.insert_resource(ClientSyncEngine::with_shared_ids(peer_ids));
 
         app.init_resource::<EntityCrdtIndex>();
-        app.add_message::<RemoteOpApplied>();
         app.init_resource::<GraphLastAck>();
+        app.add_message::<RemoteOpApplied>();
 
-        // Place the graph's structural detection and outbound drain into
-        // the shared `kyoso_sync::SyncSet` phases. `SchemaSyncedComponentPlugin`
-        // schedules itself strictly between them, so the typed-schema
-        // pipeline stays free of graph type parameters.
-        app.configure_sets(
-            Update,
-            (SyncSet::Structural, SyncSet::Outbound).chain(),
-        );
+        // Sync-pipeline phase ordering. `SchemaSyncedComponentPlugin`
+        // schedules itself between Structural and Outbound.
+        app.configure_sets(Update, (SyncSet::Structural, SyncSet::Outbound).chain());
+
+        // SyncSet::Structural: in this order —
+        //   1. apply inbound ops (may spawn placeholder entities)
+        //   2. resolve parked edges (now that endpoints might exist)
+        //   3. assign ids to locally-spawned nodes / edges
+        //   4. detect remote tombstones → despawn
+        //   5. detect local despawn → emit tombstone op
         app.add_systems(
             Update,
             (
-                graph_inbound_system::<N, E>,
-                detect_added_nodes::<N, E>,
-                detect_added_edges::<N, E>,
-                detect_tree_moves::<N, E>,
-                detect_removed_nodes::<N, E>,
-                detect_removed_edges::<N, E>,
+                graph_inbound_system,
+                resolve_pending_edges,
+                assign_local_node_ids,
+                assign_local_edge_ids,
+                despawn_tombstoned_nodes,
+                despawn_tombstoned_edges,
+                detect_local_node_despawn,
+                detect_local_edge_despawn,
             )
                 .chain()
                 .in_set(SyncSet::Structural),
         );
-        app.add_systems(
-            Update,
-            outbound_system::<N, E>.in_set(SyncSet::Outbound),
-        );
+
+        // SyncSet::Outbound: drain the engine's pending queue + ack
+        // applied_seq to the server.
+        app.add_systems(Update, outbound_system.in_set(SyncSet::Outbound));
+
+        // The two structural schemas ride the standard component-sync
+        // pipeline like any user component. Adding them here means
+        // consumers only need `SchemaSyncedComponentPlugin` for their
+        // own custom components — they get the structural ones for
+        // free with this plugin.
+        app.add_plugins((
+            SchemaSyncedComponentPlugin::<crate::schema_sync::NodeTarget, NodePresence>::default(),
+            SchemaSyncedComponentPlugin::<crate::schema_sync::EdgeTarget, EdgeEndpoints>::default(),
+        ));
     }
 }
 
-/// Tracks the last `applied_seq` we sent to the server via Ack so we
-/// only emit a Ping when something actually changed.
 #[derive(Resource, Default)]
 pub(crate) struct GraphLastAck(pub(crate) kyoso_crdt::GlobalSeq);
 
 // ---------------------------------------------------------------------------
-// Inbound — read WsInbound events, filter for graph, apply + project
+// Inbound — read WsInbound, decode, apply, project structural creation
 // ---------------------------------------------------------------------------
 
-fn graph_inbound_system<N, E>(
+fn graph_inbound_system(
     mut commands: Commands,
     mut events: MessageReader<WsInbound>,
     mut engine: ResMut<ClientSyncEngine>,
     mut index: ResMut<EntityCrdtIndex>,
     mut remote_op_events: MessageWriter<RemoteOpApplied>,
-    incoming: Query<&IncomingEdges>,
-    tree_edges: Query<(), With<TreeEdge>>,
-) where
-    N: Syncable,
-    E: Syncable,
-{
+) {
     let graph = graph_model();
     for event in events.read() {
         match event {
             WsInbound::Welcome { peer, models, .. } => {
-                // PeerIdGen was already updated by the transport's
-                // drain_inbound_system, but call set_peer for parity
-                // with the engine's internal applied_seq book-keeping.
                 engine.set_peer(*peer);
                 let Some(greeting) = models.iter().find(|g| g.model == graph) else {
                     tracing::warn!("Welcome did not include the graph greeting");
@@ -217,29 +207,25 @@ fn graph_inbound_system<N, E>(
                 if let Some(snap_bytes) = &greeting.snapshot_payload {
                     match postcard::from_bytes::<ServerSnapshot>(snap_bytes) {
                         Ok(snap) => {
-                            // The engine holds only structural state
-                            // (EmptySchema). Strip the opaque typed
-                            // schemas off the snapshot before handing
-                            // it to engine.restore — the typed state
-                            // is hydrated separately into the per-
-                            // component SchemaDoc resources below.
-                            let structural: EngineSnapshot = kyoso_crdt::Snapshot {
+                            // Engine still tracks applied_seq + (legacy)
+                            // topology. Strip the typed-schema state out
+                            // before handing to engine.restore — the
+                            // per-component SchemaDocs handle that.
+                            let structural = kyoso_crdt::Snapshot {
                                 at_seq: snap.at_seq,
                                 topology: snap.topology.clone(),
                                 schemas: std::collections::BTreeMap::new(),
                             };
                             engine.restore(structural);
-                            project_snapshot::<N, E>(
+                            // Spawn placeholders for every CrdtId the
+                            // snapshot mentions; classification is by
+                            // which structural schema appears in the
+                            // record's path set.
+                            hydrate_snapshot_placeholders(
                                 &mut commands,
                                 &mut index,
-                                &snap.topology,
+                                &snap.schemas,
                             );
-                            // Hand the opaque typed-schema state to
-                            // the registered hydrators. Deferred via
-                            // Commands because the hydrator fns need
-                            // `&mut World` to access per-schema
-                            // `SchemaDoc<S>` resources without
-                            // statically knowing the `S`.
                             let typed_state = snap.schemas;
                             commands.queue(move |world: &mut World| {
                                 hydrate_typed_schemas(world, typed_state);
@@ -248,285 +234,135 @@ fn graph_inbound_system<N, E>(
                         Err(e) => tracing::warn!(?e, "decode graph snapshot"),
                     }
                 }
-                let diff = match postcard::from_bytes::<kyoso_crdt::Diff<OpKind>>(
-                    &greeting.diff_payload,
-                ) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        tracing::warn!(?e, "decode graph diff");
-                        continue;
+                match postcard::from_bytes::<kyoso_crdt::Diff<OpKind>>(&greeting.diff_payload) {
+                    Ok(diff) => {
+                        for op in &diff.ops {
+                            apply_one(
+                                &mut commands,
+                                &mut engine,
+                                &mut index,
+                                &mut remote_op_events,
+                                op,
+                            );
+                        }
                     }
-                };
-                for op in &diff.ops {
-                    apply_one::<N, E>(
-                        &mut commands,
-                        &mut engine,
-                        &mut index,
-                        &incoming,
-                        &tree_edges,
-                        op,
-                    );
-                    remote_op_events.write(RemoteOpApplied(op.clone()));
+                    Err(e) => tracing::warn!(?e, "decode graph diff"),
                 }
             }
             WsInbound::ModelApply { model, payload } if *model == graph => {
-                let op: GraphOp = match postcard::from_bytes(payload) {
-                    Ok(op) => op,
-                    Err(e) => {
-                        tracing::warn!(?e, "decode graph Apply payload");
-                        continue;
-                    }
-                };
-                apply_one::<N, E>(
-                    &mut commands,
-                    &mut engine,
-                    &mut index,
-                    &incoming,
-                    &tree_edges,
-                    &op,
-                );
-                remote_op_events.write(RemoteOpApplied(op));
+                if let Some(op) = decode_op(payload, "Apply") {
+                    apply_one(
+                        &mut commands,
+                        &mut engine,
+                        &mut index,
+                        &mut remote_op_events,
+                        &op,
+                    );
+                }
             }
             WsInbound::ModelApplyBatch { model, payloads } if *model == graph => {
                 for payload in payloads {
-                    let op: GraphOp = match postcard::from_bytes(payload) {
-                        Ok(op) => op,
-                        Err(e) => {
-                            tracing::warn!(?e, "decode graph ApplyBatch payload");
-                            continue;
-                        }
-                    };
-                    apply_one::<N, E>(
-                        &mut commands,
-                        &mut engine,
-                        &mut index,
-                        &incoming,
-                        &tree_edges,
-                        &op,
-                    );
-                    remote_op_events.write(RemoteOpApplied(op));
+                    if let Some(op) = decode_op(payload, "ApplyBatch") {
+                        apply_one(
+                            &mut commands,
+                            &mut engine,
+                            &mut index,
+                            &mut remote_op_events,
+                            &op,
+                        );
+                    }
                 }
             }
             WsInbound::ModelCatchup { model, payload } if *model == graph => {
-                let diff: kyoso_crdt::Diff<OpKind> = match postcard::from_bytes(payload) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        tracing::warn!(?e, "decode graph Catchup payload");
-                        continue;
+                match postcard::from_bytes::<kyoso_crdt::Diff<OpKind>>(payload) {
+                    Ok(diff) => {
+                        for op in &diff.ops {
+                            apply_one(
+                                &mut commands,
+                                &mut engine,
+                                &mut index,
+                                &mut remote_op_events,
+                                op,
+                            );
+                        }
                     }
-                };
-                for op in &diff.ops {
-                    apply_one::<N, E>(
-                        &mut commands,
-                        &mut engine,
-                        &mut index,
-                        &incoming,
-                        &tree_edges,
-                        op,
-                    );
-                    remote_op_events.write(RemoteOpApplied(op.clone()));
+                    Err(e) => tracing::warn!(?e, "decode graph catchup"),
                 }
             }
-            // Ignore non-graph events; other model plugins handle them.
             _ => {}
         }
     }
 }
 
-fn apply_one<N, E>(
+fn decode_op(payload: &[u8], stream: &str) -> Option<GraphOp> {
+    match postcard::from_bytes(payload) {
+        Ok(op) => Some(op),
+        Err(e) => {
+            tracing::warn!(?e, stream, "decode graph payload");
+            None
+        }
+    }
+}
+
+fn apply_one(
     commands: &mut Commands,
     engine: &mut ClientSyncEngine,
     index: &mut EntityCrdtIndex,
-    incoming: &Query<&IncomingEdges>,
-    tree_edges: &Query<(), With<TreeEdge>>,
+    remote_op_events: &mut MessageWriter<RemoteOpApplied>,
     op: &GraphOp,
-) where
-    N: Syncable,
-    E: Syncable,
-{
+) {
+    eprintln!("[apply_one] op={:?}", op);
     if let Err(e) = engine.apply_remote(op) {
         tracing::warn!(?e, "apply_remote rejected op {op:?}");
         return;
     }
-    if let OpKind::Move {
-        target,
-        new_parent,
-        position,
-    } = &op.kind
-    {
-        if engine.tree_parent(*target) == *new_parent {
-            project_move::<N, E>(
-                commands,
-                index,
-                incoming,
-                tree_edges,
-                *target,
-                *new_parent,
-                position,
-            );
-        }
-        return;
-    }
-    project_op::<N, E>(commands, index, op);
+    // For structural property ops (NodePresence / EdgeEndpoints),
+    // ensure the local entity exists before downstream typed-schema
+    // projection runs.
+    ensure_inbound_entity(commands, index, op);
+    remote_op_events.write(RemoteOpApplied(op.clone()));
 }
 
-fn project_op<N, E>(commands: &mut Commands, index: &mut EntityCrdtIndex, op: &GraphOp)
-where
-    N: Syncable,
-    E: Syncable,
-{
-    match &op.kind {
-        OpKind::AddNode => {
-            if !index.entity_of_node.contains_key(&op.id) {
-                let entity = commands.spawn(N::default()).id();
-                index.node_of_entity.insert(entity, op.id);
-                index.entity_of_node.insert(op.id, entity);
-            }
-        }
-        OpKind::AddRefEdge { from, to, category } => {
-            project_edge::<N, E>(commands, index, op.id, *from, *to);
-            if let Some(entity) = index.entity_of_edge.get(&op.id).copied() {
-                let category = category.clone();
-                commands.queue(ApplyEdgeCategory { entity, category });
-            }
-        }
-        OpKind::SetNodeProperty { .. } | OpKind::SetRefEdgeProperty { .. } => {
-            // Handled by per-schema typed plugins via RemoteOpApplied.
-        }
-        OpKind::RemoveNode { target } => {
-            if let Some(entity) = index.entity_of_node.remove(target) {
-                index.node_of_entity.remove(&entity);
-                commands.entity(entity).despawn();
-            }
-        }
-        OpKind::RemoveRefEdge { target } => {
-            if let Some(entity) = index.entity_of_edge.remove(target) {
-                index.edge_of_entity.remove(&entity);
-                commands.entity(entity).despawn();
-            }
-        }
-        OpKind::Move { .. } => {
-            // Handled in `apply_one` directly so it can read the tree-edge query.
-        }
-    }
-}
+// ---------------------------------------------------------------------------
+// Outbound — drain pending engine ops + ack
+// ---------------------------------------------------------------------------
 
-fn project_move<N, E>(
-    commands: &mut Commands,
-    index: &EntityCrdtIndex,
-    incoming: &Query<&IncomingEdges>,
-    tree_edges: &Query<(), With<TreeEdge>>,
-    target: kyoso_crdt::CrdtId,
-    new_parent: Option<kyoso_crdt::CrdtId>,
-    position: &str,
-) where
-    N: Syncable,
-    E: Syncable,
-{
-    let Some(&target_entity) = index.entity_of_node.get(&target) else {
-        return;
-    };
-    if let Ok(inc) = incoming.get(target_entity) {
-        for edge_entity in inc.iter().collect::<Vec<_>>() {
-            if tree_edges.get(edge_entity).is_ok() {
-                commands.entity(edge_entity).despawn();
-            }
-        }
-    }
-    let new_parent_entity = new_parent.and_then(|p| index.entity_of_node.get(&p).copied());
-    commands
-        .entity(target_entity)
-        .insert((TreeParent(new_parent_entity), OrderKey(position.to_string())));
-    if let Some(parent_entity) = new_parent_entity {
-        commands
-            .entity(parent_entity)
-            .with_related_entities::<EdgeFrom>(|rel| {
-                rel.spawn((EdgeTo(target_entity), TreeEdge));
-            });
-    }
-}
-
-fn project_edge<N, E>(
-    commands: &mut Commands,
-    index: &mut EntityCrdtIndex,
-    edge_id: kyoso_crdt::CrdtId,
-    from: kyoso_crdt::CrdtId,
-    to: kyoso_crdt::CrdtId,
-) where
-    N: Syncable,
-    E: Syncable,
-{
-    if index.entity_of_edge.contains_key(&edge_id) {
+fn outbound_system(
+    mut engine: ResMut<ClientSyncEngine>,
+    bridge: Option<Res<WsBridge>>,
+    status: Res<SyncStatus>,
+    mut last_ack: ResMut<GraphLastAck>,
+) {
+    if !status.is_connected() {
         return;
     }
-    let (Some(&from_entity), Some(&to_entity)) = (
-        index.entity_of_node.get(&from),
-        index.entity_of_node.get(&to),
-    ) else {
-        tracing::warn!(?edge_id, ?from, ?to, "endpoint nodes missing for edge");
-        return;
-    };
-    let entity = commands
-        .spawn((EdgeFrom(from_entity), EdgeTo(to_entity), E::default()))
-        .id();
-    index.edge_of_entity.insert(entity, edge_id);
-    index.entity_of_edge.insert(edge_id, entity);
-}
-
-fn project_snapshot<N, E>(
-    commands: &mut Commands,
-    index: &mut EntityCrdtIndex,
-    topo: &GraphTopologySnapshot,
-) where
-    N: Syncable,
-    E: Syncable,
-{
-    for n in &topo.nodes {
-        if !index.entity_of_node.contains_key(&n.id) {
-            let entity = commands.spawn(N::default()).id();
-            index.node_of_entity.insert(entity, n.id);
-            index.entity_of_node.insert(n.id, entity);
-            if let Some(key) = &n.order_key {
-                commands.entity(entity).insert(OrderKey(key.clone()));
-            }
-        }
-    }
-    for n in &topo.nodes {
-        if let Some(parent_id) = n.tree_parent {
-            let (Some(&child_e), Some(&parent_e)) = (
-                index.entity_of_node.get(&n.id),
-                index.entity_of_node.get(&parent_id),
-            ) else {
+    let Some(bridge) = bridge else { return };
+    let graph = graph_model();
+    let peer = engine.peer();
+    let pending = engine.drain_pending();
+    for op in pending {
+        eprintln!("[outbound peer={peer:?}] ship op={op:?}");
+        let payload = match postcard::to_allocvec(&op) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(?e, "encode pending graph op");
                 continue;
-            };
-            commands
-                .entity(child_e)
-                .insert(TreeParent(Some(parent_e)));
-            commands
-                .entity(parent_e)
-                .with_related_entities::<EdgeFrom>(|rel| {
-                    rel.spawn((EdgeTo(child_e), TreeEdge));
-                });
+            }
+        };
+        if !bridge.submit(graph.clone(), payload) {
+            return;
         }
     }
-    for e in &topo.edges {
-        project_edge::<N, E>(commands, index, e.id, e.from, e.to);
+    let applied = engine.applied_seq();
+    if applied > last_ack.0 && bridge.ack(graph.clone(), applied) {
+        last_ack.0 = applied;
     }
 }
 
-/// Install the opaque typed-schema state from a snapshot into the
-/// registered per-component `SchemaDoc` resources.
-///
-/// Runs deferred via `commands.queue(...)` from the Welcome handler so
-/// it has `&mut World` (needed to call the runtime-dispatched
-/// [`HydratorFn`](crate::schema_sync::HydratorFn)s — each one talks to
-/// a different `SchemaDoc<C::Schema>` resource type, so the dispatch
-/// table is keyed by `(TargetKind, schema name)` and resolved at run
-/// time).
-///
-/// By the time this runs, [`project_snapshot`] has already created and
-/// indexed every entity present in the snapshot, so the node/edge
-/// classification below is reliable.
+// ---------------------------------------------------------------------------
+// Snapshot hydration — typed schema state from server snapshot
+// ---------------------------------------------------------------------------
+
 fn hydrate_typed_schemas(
     world: &mut World,
     typed_state: std::collections::BTreeMap<kyoso_crdt::CrdtId, OpaqueRecord>,
@@ -535,8 +371,6 @@ fn hydrate_typed_schemas(
         Some(h) if !h.is_empty() => h.all(),
         _ => return,
     };
-    // Snapshot the index keys for classification — release the borrow
-    // before invoking hydrators (they need mutable World access).
     let (node_ids, edge_ids): (
         std::collections::HashSet<kyoso_crdt::CrdtId>,
         std::collections::HashSet<kyoso_crdt::CrdtId>,
@@ -554,8 +388,8 @@ fn hydrate_typed_schemas(
         } else if edge_ids.contains(&target) {
             TargetKind::Edge
         } else {
-            // Target was tombstoned before the snapshot, so it isn't in
-            // the topology projection. Nothing to hydrate.
+            // Pre-refactor record (no NodePresence / EdgeEndpoints
+            // field) so no placeholder was spawned. Skip.
             continue;
         };
         for (path, field) in opaque_state.fields {
@@ -563,161 +397,15 @@ fn hydrate_typed_schemas(
                 continue;
             };
             let inner_path = kyoso_crdt::Path(path.0[1..].to_vec());
+            // For the two structural schemas, the `SchemaSyncedComponentPlugin`'s
+            // own registered hydrator handles the field — we already spawned the
+            // entity, so the doc state + write_back will sync `alive` /
+            // `from` / `to` automatically. Just re-route via the
+            // hydrators table.
+            let _ = (NODE_PRESENCE_SCHEMA, EDGE_ENDPOINTS_SCHEMA);
             if let Some(hydrate_fn) = hydrators.get(&(kind, name)).copied() {
                 hydrate_fn(world, target, inner_path, field);
             }
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Detection — local mutations → CRDT ops
-// ---------------------------------------------------------------------------
-
-pub(crate) fn detect_added_nodes<N, E>(
-    mut engine: ResMut<ClientSyncEngine>,
-    mut index: ResMut<EntityCrdtIndex>,
-    added: Query<Entity, Added<N>>,
-) where
-    N: Syncable,
-    E: Syncable,
-{
-    for entity in added.iter() {
-        if index.node_id(entity).is_some() {
-            continue;
-        }
-        let id = engine.add_node();
-        index.bind_node(entity, id);
-    }
-}
-
-/// Watch local `TreeParent` / `OrderKey` changes and emit CRDT `Move`
-/// ops on the outbound side.
-///
-/// Named `detect_tree_moves` (not `detect_tree_position_changes`) to
-/// avoid collision with [`kyoso_graph::detect_tree_position_changes`],
-/// which fires the ECS-side `GraphMessage::TreePositionChanged`
-/// propagation event off the same `Changed` query. Both systems
-/// observe the same component change; this one converts it into a
-/// wire op, that one converts it into a propagation event.
-fn detect_tree_moves<N, E>(
-    mut engine: ResMut<ClientSyncEngine>,
-    index: Res<EntityCrdtIndex>,
-    nodes: Query<
-        (Entity, &TreeParent, &OrderKey),
-        Or<(Changed<TreeParent>, Changed<OrderKey>)>,
-    >,
-) where
-    N: Syncable,
-    E: Syncable,
-{
-    for (entity, parent, key) in nodes.iter() {
-        let Some(&child_id) = index.node_of_entity.get(&entity) else {
-            continue;
-        };
-        let new_parent_id = parent
-            .0
-            .and_then(|p| index.node_of_entity.get(&p).copied());
-        if engine.tree_parent(child_id) == new_parent_id
-            && engine.node_order_key(child_id) == Some(key.0.as_str())
-        {
-            continue;
-        }
-        engine.move_node(child_id, new_parent_id, key.0.clone());
-    }
-}
-
-pub(crate) fn detect_added_edges<N, E>(
-    mut engine: ResMut<ClientSyncEngine>,
-    mut index: ResMut<EntityCrdtIndex>,
-    edges: Query<(Entity, &EdgeFrom, &EdgeTo), (Added<E>, Without<TreeEdge>)>,
-) where
-    N: Syncable,
-    E: Syncable,
-{
-    for (edge_entity, from, to) in edges.iter() {
-        if index.edge_of_entity.contains_key(&edge_entity) {
-            continue;
-        }
-        let (Some(&from_id), Some(&to_id)) = (
-            index.node_of_entity.get(&from.0),
-            index.node_of_entity.get(&to.0),
-        ) else {
-            continue;
-        };
-        let edge_id = engine.add_edge(from_id, to_id);
-        index.edge_of_entity.insert(edge_entity, edge_id);
-        index.entity_of_edge.insert(edge_id, edge_entity);
-    }
-}
-
-fn detect_removed_nodes<N, E>(
-    mut engine: ResMut<ClientSyncEngine>,
-    mut index: ResMut<EntityCrdtIndex>,
-    mut removed: RemovedComponents<N>,
-) where
-    N: Syncable,
-    E: Syncable,
-{
-    for entity in removed.read() {
-        let Some(node_id) = index.node_of_entity.remove(&entity) else {
-            continue;
-        };
-        index.entity_of_node.remove(&node_id);
-        engine.remove_node(node_id);
-    }
-}
-
-fn detect_removed_edges<N, E>(
-    mut engine: ResMut<ClientSyncEngine>,
-    mut index: ResMut<EntityCrdtIndex>,
-    mut removed: RemovedComponents<E>,
-) where
-    N: Syncable,
-    E: Syncable,
-{
-    for entity in removed.read() {
-        let Some(edge_id) = index.edge_of_entity.remove(&entity) else {
-            continue;
-        };
-        index.entity_of_edge.remove(&edge_id);
-        engine.remove_edge(edge_id);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Outbound — drain pending + ack
-// ---------------------------------------------------------------------------
-
-pub(crate) fn outbound_system<N, E>(
-    mut engine: ResMut<ClientSyncEngine>,
-    bridge: Option<Res<WsBridge>>,
-    status: Res<SyncStatus>,
-    mut last_ack: ResMut<GraphLastAck>,
-) where
-    N: Syncable,
-    E: Syncable,
-{
-    if !status.is_connected() {
-        return;
-    }
-    let Some(bridge) = bridge else { return };
-    let graph = graph_model();
-    let pending = engine.drain_pending();
-    for op in pending {
-        let payload = match postcard::to_allocvec(&op) {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!(?e, "encode pending graph op");
-                continue;
-            }
-        };
-        if !bridge.submit(graph.clone(), payload) {
-            return;
-        }
-    }
-    let applied = engine.applied_seq();
-    if applied > last_ack.0 && bridge.ack(graph.clone(), applied) {
-        last_ack.0 = applied;
     }
 }

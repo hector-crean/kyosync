@@ -49,7 +49,10 @@ use crate::context::CausalContext;
 use crate::delta::{Path, PathSegment, WireDelta};
 use crate::lattice::{Crdt, DeltaError, Lattice};
 use crate::schema::{IntoWireOp, SchemaApply};
-use crate::types::{LwwDelta, LwwRegister, OrSet, OrSetDelta, PnCounter, PnDelta, Sequence, SequenceDelta};
+use crate::types::{
+    LwwDelta, LwwRegister, MoveTree, MoveTreeDelta, OrSet, OrSetDelta, PnCounter, PnDelta,
+    Sequence, SequenceDelta,
+};
 
 /// One primitive CRDT's fully-merged state, holding values as opaque
 /// bytes so the server doesn't need to know the user's `T`.
@@ -59,6 +62,9 @@ pub enum OpaqueValue {
     OrSet(OrSet<Vec<u8>>),
     PnCounter(PnCounter),
     Sequence(Sequence<Vec<u8>>),
+    /// No `<Vec<u8>>` — a move tree carries only ids and positions, no
+    /// opaque user value, so the server holds the concrete `MoveTree`.
+    MoveTree(MoveTree),
 }
 
 impl Lattice for OpaqueValue {
@@ -76,6 +82,7 @@ impl Lattice for OpaqueValue {
             (OpaqueValue::OrSet(a), OpaqueValue::OrSet(b)) => a.join(b),
             (OpaqueValue::PnCounter(a), OpaqueValue::PnCounter(b)) => a.join(b),
             (OpaqueValue::Sequence(a), OpaqueValue::Sequence(b)) => a.join(b),
+            (OpaqueValue::MoveTree(a), OpaqueValue::MoveTree(b)) => a.join(b),
             // Variant mismatch — caller is mixing CRDT kinds at the same
             // path. This shouldn't happen with a well-formed schema; we
             // leave `self` untouched rather than panic.
@@ -268,6 +275,21 @@ impl SchemaApply for OpaqueRecord {
                 }
                 self.fields.retain(|p, _| !path_starts_with(p, &drop_prefix));
                 Ok(())
+            }
+            WireDelta::TreeMove { child, new_parent, position } => {
+                let field = self
+                    .fields
+                    .entry(path.clone())
+                    .or_insert_with(|| OpaqueValue::MoveTree(MoveTree::new()));
+                let OpaqueValue::MoveTree(tree) = field else {
+                    return Err(DeltaError::TypeMismatch {
+                        reason: format!("TreeMove at non-MoveTree path {path:?}"),
+                    });
+                };
+                tree.apply(
+                    &MoveTreeDelta::Move { child, new_parent, position },
+                    ctx,
+                )
             }
         }
     }

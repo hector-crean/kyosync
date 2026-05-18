@@ -68,12 +68,13 @@ pub use walker::{NodeContext, NodeVisitor, SubcanvasNodeExt, Walker};
 /// entity carries.
 #[derive(Component, Default, Clone, Debug, PartialEq, Eq, Reflect)]
 #[reflect(Component, Default)]
+#[require(kyoso_graph_sync::NodePresence)]
 pub struct FigmaNode;
 
-/// Zero-sized marker: every kyoso_figma edge entity carries this. Used
-/// as the `E` parameter to [`kyoso_graph_sync::GraphSyncPlugin`]. The
+/// Zero-sized marker: every kyoso_figma edge entity carries this. The
 /// initial cut only uses tree edges (via `kyoso_graph::tree`);
 /// reference edges (component→main, prototype links) are deferred.
 #[derive(Component, Default, Clone, Debug, PartialEq, Eq, Reflect)]
 #[reflect(Component, Default)]
+#[require(kyoso_graph_sync::EdgeEndpoints)]
 pub struct FigmaEdge;

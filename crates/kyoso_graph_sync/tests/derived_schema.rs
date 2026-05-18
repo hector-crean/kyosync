@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use bevy::prelude::*;
 use kyoso_graph::GraphManagerPlugin;
 use kyoso_server::{AppState, app};
-use kyoso_graph_sync::{GraphSyncPlugin, SchemaSync, NodeTarget, SchemaSyncedComponentPlugin};
+use kyoso_graph_sync::{
+    GraphSyncPlugin, NodePresence, NodeTarget, SchemaSync, SchemaSyncedComponentPlugin,
+};
 use kyoso_sync::SyncStatus;
 use tokio::net::TcpListener;
 
@@ -21,6 +23,7 @@ use tokio::net::TcpListener;
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "Derived")]
+#[require(NodePresence)]
 struct Derived {
     name: String,
     width: f32,
@@ -38,6 +41,7 @@ struct DerivedEdge;
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "DerivedTwo")]
+#[require(NodePresence)]
 struct DerivedTwo {
     count: u32,
     label: String,
@@ -58,7 +62,7 @@ fn build_app(server: SocketAddr, room: &str) -> App {
     let mut app = App::new();
     app.add_plugins((
         GraphManagerPlugin::<Derived, DerivedEdge>::new(),
-        GraphSyncPlugin::<Derived, DerivedEdge>::new(format!("ws://{server}/ws"), room),
+        GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
         SchemaSyncedComponentPlugin::<NodeTarget, Derived>::default(),
     ));
     app
@@ -68,7 +72,7 @@ fn build_app_multi(server: SocketAddr, room: &str) -> App {
     let mut app = App::new();
     app.add_plugins((
         GraphManagerPlugin::<Derived, DerivedEdge>::new(),
-        GraphSyncPlugin::<Derived, DerivedEdge>::new(format!("ws://{server}/ws"), room),
+        GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
         SchemaSyncedComponentPlugin::<NodeTarget, Derived>::default(),
         SchemaSyncedComponentPlugin::<NodeTarget, DerivedTwo>::default(),
     ));
@@ -310,6 +314,7 @@ fn default_component_against_bottom_doc_emits_nothing() {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "Skipping")]
+#[require(NodePresence)]
 struct Skipping {
     synced: u32,
 
@@ -353,6 +358,7 @@ fn skipped_fields_do_not_appear_in_schema() {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "Renamed")]
+#[require(NodePresence)]
 struct Renamed {
     #[crdt(rename = "w")]
     width: f32,
@@ -395,6 +401,7 @@ fn renamed_fields_use_renamed_identifier_in_schema() {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "DefaultsCustom")]
+#[require(NodePresence)]
 struct DefaultsCustom {
     #[crdt(default = "42u32")]
     sentinel: u32,
@@ -427,6 +434,7 @@ fn custom_default_expression_is_used_as_echo_guard() {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "Combined")]
+#[require(NodePresence)]
 struct Combined {
     #[crdt(skip)]
     cache_token: u64,
@@ -445,6 +453,7 @@ struct Combined {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "Tagged")]
+#[require(NodePresence)]
 struct Tagged {
     #[crdt(or_set)]
     tags: Vec<String>,
@@ -509,7 +518,7 @@ fn build_tagged_app(server: SocketAddr, room: &str) -> App {
     let mut app = App::new();
     app.add_plugins((
         GraphManagerPlugin::<Tagged, DerivedEdge>::new(),
-        GraphSyncPlugin::<Tagged, DerivedEdge>::new(format!("ws://{server}/ws"), room),
+        GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
         SchemaSyncedComponentPlugin::<NodeTarget, Tagged>::default(),
     ));
     app
@@ -519,6 +528,7 @@ fn build_tagged_app(server: SocketAddr, room: &str) -> App {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "Counted")]
+#[require(NodePresence)]
 struct Counted {
     #[crdt(counter)]
     edits: i64,
@@ -576,7 +586,7 @@ fn build_counted_app(server: SocketAddr, room: &str) -> App {
     let mut app = App::new();
     app.add_plugins((
         GraphManagerPlugin::<Counted, DerivedEdge>::new(),
-        GraphSyncPlugin::<Counted, DerivedEdge>::new(format!("ws://{server}/ws"), room),
+        GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
         SchemaSyncedComponentPlugin::<NodeTarget, Counted>::default(),
     ));
     app
@@ -630,6 +640,7 @@ use std::collections::HashMap;
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "Mapped")]
+#[require(NodePresence)]
 struct Mapped {
     #[crdt(map)]
     properties: HashMap<String, String>,
@@ -693,7 +704,7 @@ fn build_mapped_app(server: SocketAddr, room: &str) -> App {
     let mut app = App::new();
     app.add_plugins((
         GraphManagerPlugin::<Mapped, DerivedEdge>::new(),
-        GraphSyncPlugin::<Mapped, DerivedEdge>::new(format!("ws://{server}/ws"), room),
+        GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
         SchemaSyncedComponentPlugin::<NodeTarget, Mapped>::default(),
     ));
     app
@@ -709,6 +720,7 @@ fn build_mapped_app(server: SocketAddr, room: &str) -> App {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "Inner")]
+#[require(NodePresence)]
 struct Inner {
     label: String,
     weight: f32,
@@ -721,6 +733,7 @@ struct Inner {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "Outer")]
+#[require(NodePresence)]
 struct Outer {
     name: String,
     #[crdt(nested)]
@@ -798,7 +811,7 @@ fn build_outer_app(server: SocketAddr, room: &str) -> App {
     let mut app = App::new();
     app.add_plugins((
         GraphManagerPlugin::<Outer, DerivedEdge>::new(),
-        GraphSyncPlugin::<Outer, DerivedEdge>::new(format!("ws://{server}/ws"), room),
+        GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
         SchemaSyncedComponentPlugin::<NodeTarget, Outer>::default(),
     ));
     app
@@ -813,6 +826,7 @@ fn build_outer_app(server: SocketAddr, room: &str) -> App {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "TextDoc")]
+#[require(NodePresence)]
 struct TextDoc {
     #[crdt(sequence)]
     body: String,
@@ -888,7 +902,7 @@ fn build_text_app(server: SocketAddr, room: &str) -> App {
     let mut app = App::new();
     app.add_plugins((
         GraphManagerPlugin::<TextDoc, DerivedEdge>::new(),
-        GraphSyncPlugin::<TextDoc, DerivedEdge>::new(format!("ws://{server}/ws"), room),
+        GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
         SchemaSyncedComponentPlugin::<NodeTarget, TextDoc>::default(),
     ));
     app
@@ -899,6 +913,7 @@ fn build_text_app(server: SocketAddr, room: &str) -> App {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "OrderedList")]
+#[require(NodePresence)]
 struct OrderedList {
     #[crdt(sequence)]
     items: Vec<u32>,
@@ -947,7 +962,7 @@ fn build_ordered_list_app(server: SocketAddr, room: &str) -> App {
     let mut app = App::new();
     app.add_plugins((
         GraphManagerPlugin::<OrderedList, DerivedEdge>::new(),
-        GraphSyncPlugin::<OrderedList, DerivedEdge>::new(format!("ws://{server}/ws"), room),
+        GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
         SchemaSyncedComponentPlugin::<NodeTarget, OrderedList>::default(),
     ));
     app
@@ -964,6 +979,7 @@ fn build_ordered_list_app(server: SocketAddr, room: &str) -> App {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "WithBuiltin")]
+#[require(NodePresence)]
 struct WithBuiltin {
     #[crdt(with = "::kyoso_crdt::types::LwwRegister<u32>")]
     score: u32,
@@ -1018,7 +1034,7 @@ fn build_with_builtin_app(server: SocketAddr, room: &str) -> App {
     let mut app = App::new();
     app.add_plugins((
         GraphManagerPlugin::<WithBuiltin, DerivedEdge>::new(),
-        GraphSyncPlugin::<WithBuiltin, DerivedEdge>::new(format!("ws://{server}/ws"), room),
+        GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
         SchemaSyncedComponentPlugin::<NodeTarget, WithBuiltin>::default(),
     ));
     app
@@ -1209,7 +1225,7 @@ mod custom_with {
         let mut app = App::new();
         app.add_plugins((
             GraphManagerPlugin::<Container, DerivedEdge>::new(),
-            GraphSyncPlugin::<Container, DerivedEdge>::new(format!("ws://{server}/ws"), room),
+            GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
             SchemaSyncedComponentPlugin::<NodeTarget, Container>::default(),
         ));
         app
@@ -1222,7 +1238,6 @@ mod custom_with {
 
 mod compaction_recovery {
     use super::{Counted, build_counted_app, pump_until, sync_status};
-    use bevy::prelude::App;
     use kyoso_server::{AppState, app};
     use std::net::SocketAddr;
     use std::sync::Arc;
@@ -1386,7 +1401,7 @@ mod reconnect_clobber {
         let mut app = App::new();
         app.add_plugins((
             GraphManagerPlugin::<AutoRequiringMarker, MarkerEdge>::new(),
-            GraphSyncPlugin::<AutoRequiringMarker, MarkerEdge>::new(
+            GraphSyncPlugin::new(
                 format!("ws://{server}/ws"),
                 room,
             ),

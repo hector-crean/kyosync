@@ -37,12 +37,8 @@ use kyoso_camera::controller::pan_orbit_camera::OrbitCameraController;
 use kyoso_camera::controller::{DefaultCameraSettings, OrbitCameraControllerPlugin};
 use kyoso_camera::markers::MainCamera;
 use kyoso_camera::raycast::AnalyticalPlanePickingPlugin;
-use kyoso_circuit::{
-    CircuitEdge, CircuitNode, DifferentialPairMarker, KyosoCircuitPlugin, SameNetMarker,
-    WireMarker,
-};
+use kyoso_circuit::KyosoCircuitPlugin;
 use kyoso_drag::three_d::DragTransform3dPlugin;
-use kyoso_graph_sync::SyncedEdgeCategoryPlugin;
 use kyoso_polyline::PolylinePlugin;
 
 pub mod grid_manager;
@@ -79,11 +75,12 @@ impl Plugin for AppPlugin {
                 server_url: self.server_url.clone(),
                 room: self.room.clone(),
             },
-            // Per-edge-category plugins: each registers an inbound
-            // projector and an outbound detection system for its marker.
-            SyncedEdgeCategoryPlugin::<CircuitNode, CircuitEdge, WireMarker>::default(),
-            SyncedEdgeCategoryPlugin::<CircuitNode, CircuitEdge, SameNetMarker>::default(),
-            SyncedEdgeCategoryPlugin::<CircuitNode, CircuitEdge, DifferentialPairMarker>::default(),
+            // Per-edge-category markers (Wire / SameNet / DifferentialPair)
+            // are local-only after the slim `GraphSyncPlugin` refactor —
+            // the structural edge presence + endpoints replicate, but
+            // category markers do not. Apps that need cross-peer category
+            // sync should derive `SchemaSync` on a category-bearing
+            // component and add `SchemaSyncedComponentPlugin::<EdgeTarget, _>`.
             ToolsPlugin,
             LayerManagerPlugin,
             GridManagerPlugin,

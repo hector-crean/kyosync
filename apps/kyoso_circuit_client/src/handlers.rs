@@ -1,13 +1,8 @@
 //! Top-level `AppCommand` dispatch and umbrella `AppEvent` projection.
 
 use bevy::prelude::*;
-use kyoso_circuit::{
-    CircuitEdge, CircuitEdgeKind, DifferentialPairMarker, SameNetMarker, WireMarker,
-    insert_marker_for,
-};
+use kyoso_circuit::{CircuitEdge, CircuitEdgeKind, insert_marker_for};
 use kyoso_graph::components::{EdgeFrom, EdgeTo};
-use kyoso_graph_crdt::EdgeCategory;
-use kyoso_graph_sync::{ClientSyncEngine, EdgeCategoryMarker};
 
 use crate::msg::{AppCommand, AppEvent, ExternalId, GraphCommandExt, SyncCommand, SyncEvent};
 use crate::tool::{
@@ -29,8 +24,7 @@ pub fn dispatch_app_commands(
     mut place_w: MessageWriter<PlaceCommand>,
     mut connect_w: MessageWriter<ConnectCommand>,
     mut events: MessageWriter<AppEvent>,
-    mut index: ResMut<SyncedIndex>,
-    mut engine: ResMut<ClientSyncEngine>,
+    index: Res<SyncedIndex>,
     edges: Query<(Entity, &EdgeFrom, &EdgeTo), With<CircuitEdge>>,
 ) {
     for cmd in reader.read() {
@@ -71,15 +65,7 @@ pub fn dispatch_app_commands(
                 crate::tool::place::spawn_component(&mut commands, *position, *kind, *layer);
             }
             AppCommand::Graph(GraphCommandExt::Connect { from, to, kind }) => {
-                dispatch_connect(
-                    &mut commands,
-                    &mut index,
-                    &mut engine,
-                    &mut events,
-                    *from,
-                    *to,
-                    *kind,
-                );
+                dispatch_connect(&mut commands, &index, &mut events, *from, *to, *kind);
             }
             AppCommand::Graph(GraphCommandExt::Disconnect { from, to }) => {
                 dispatch_disconnect(&mut commands, &index, &edges, &mut events, *from, *to);
@@ -101,18 +87,9 @@ pub fn dispatch_app_commands(
     }
 }
 
-fn category_for(kind: CircuitEdgeKind) -> EdgeCategory {
-    match kind {
-        CircuitEdgeKind::Wire => WireMarker::category(),
-        CircuitEdgeKind::SameNet => SameNetMarker::category(),
-        CircuitEdgeKind::DifferentialPair => DifferentialPairMarker::category(),
-    }
-}
-
 fn dispatch_connect(
     commands: &mut Commands,
-    index: &mut SyncedIndex,
-    engine: &mut ClientSyncEngine,
+    index: &SyncedIndex,
     events: &mut MessageWriter<AppEvent>,
     from: ExternalId,
     to: ExternalId,
@@ -130,24 +107,16 @@ fn dispatch_connect(
         });
         return;
     };
-    // Spawn the edge entity locally with the structural marker plus the
-    // per-kind marker. Then bind it to a CRDT id with the right category
-    // ourselves, instead of relying on `detect_added_categorized_edges`
-    // — that auto-detection races with the structural `detect_added_edges`
-    // when the spawn happens inside a system with no explicit ordering
-    // constraint to those detection systems, and the structural detector
-    // wins, emitting an `AddRefEdge` with the default `Reference`
-    // category instead of `circuit-wire` / `circuit-same-net` /
-    // `circuit-diff-pair`. Doing the engine binding here is also slightly
-    // more efficient: one categorised op instead of one structural op
-    // immediately followed by an `Added<Marker>` in the next frame.
+    // Spawn the edge entity locally with the structural marker plus
+    // the per-kind marker. `assign_local_edge_ids` (in
+    // `kyoso_graph_sync`) mints a CrdtId and populates `EdgeEndpoints`
+    // next frame; the per-kind marker stays local-only since the slim
+    // `GraphSyncPlugin` no longer carries edge-category dispatch.
     let entity = commands
         .spawn((CircuitEdge, EdgeFrom(from_entity), EdgeTo(to_entity)))
         .id();
     let mut entity_commands = commands.entity(entity);
     insert_marker_for(&mut entity_commands, kind);
-    let edge_id = engine.add_ref_edge_with_category(from, to, category_for(kind));
-    index.bind_edge(entity, edge_id);
 }
 
 fn dispatch_disconnect(

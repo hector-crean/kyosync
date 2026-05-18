@@ -36,7 +36,6 @@ use kyoso_graph_sync::{GraphSyncPlugin, NodeTarget, SchemaSyncedComponentPlugin}
 use kyoso_sync::SyncTransportPlugin;
 
 use crate::{Frame, Rectangle, Size, Text, TypeStyle};
-use crate::{FigmaEdge, FigmaNode};
 
 pub struct KyosoFigmaPlugin {
     pub server_url: String,
@@ -51,7 +50,7 @@ impl Plugin for KyosoFigmaPlugin {
             // model plugins (comments, presence) mount onto the same
             // socket.
             SyncTransportPlugin::new(self.server_url.clone(), self.room.clone()),
-            GraphSyncPlugin::<FigmaNode, FigmaEdge>::default(),
+            GraphSyncPlugin::default(),
             // Field-bearing components.
             SchemaSyncedComponentPlugin::<NodeTarget, Frame>::default(),
             SchemaSyncedComponentPlugin::<NodeTarget, Rectangle>::default(),

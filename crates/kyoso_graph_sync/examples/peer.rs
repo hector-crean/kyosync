@@ -2,7 +2,7 @@
 //! prints the converged graph state every second.
 //!
 //! Pair with another instance — or with the existing
-//! `kyoso_sync` integration tests — to see ops propagate live.
+//! `kyoso_graph_sync` integration tests — to see ops propagate live.
 //!
 //! Usage:
 //!
@@ -11,30 +11,25 @@
 //! cargo run -p kyoso_server
 //!
 //! # Terminal 2 — start peer "a"
-//! cargo run -p kyoso_sync --example peer -- demo a
+//! cargo run -p kyoso_graph_sync --example peer -- demo a
 //!
 //! # Terminal 3 — start peer "b"
-//! cargo run -p kyoso_sync --example peer -- demo b
+//! cargo run -p kyoso_graph_sync --example peer -- demo b
 //! ```
 //!
-//! Each peer adds a new node every two seconds and prints the total
+//! Each peer spawns a new node every two seconds and prints the total
 //! count it sees, so you can watch them converge.
 
 use std::time::Duration;
 
 use bevy::MinimalPlugins;
 use bevy::prelude::*;
-use kyoso_graph_sync::{ClientSyncEngine, GraphSyncPlugin};
+use kyoso_graph_sync::{GraphSyncPlugin, NodePresence};
 use kyoso_sync::SyncStatus;
 
-#[derive(Component, Default, Debug, Clone, Reflect)]
-#[reflect(Component, Default)]
-struct Node;
-#[derive(Component, Default, Debug, Clone, Reflect)]
-#[reflect(Component, Default)]
-struct Edge;
-
-type SyncedGraph = ClientSyncEngine;
+#[derive(Component, Default, Debug, Clone)]
+#[require(NodePresence)]
+struct DemoNode;
 
 #[derive(Resource)]
 struct Args {
@@ -52,16 +47,13 @@ fn main() {
     let url = std::env::var("KYOSO_URL").unwrap_or_else(|_| "ws://127.0.0.1:7878/ws".into());
     println!("[{label}] connecting to {url} room={room}");
 
-    // Build the app, then drive it with our own loop. The ScheduleRunnerPlugin
-    // version triggers an obscure spin-loop on Bevy main when combined with the
-    // sync plugin's runtime-thread workload; manual `update()` calls sidestep it.
     let mut app = App::new();
     app.insert_resource(Args {
         label: label.clone(),
     })
     .init_resource::<LocalCounter>()
     .add_plugins(MinimalPlugins)
-    .add_plugins(GraphSyncPlugin::<Node, Edge>::new(url, room))
+    .add_plugins(GraphSyncPlugin::new(url, room))
     .add_systems(
         Update,
         (announce_when_connected, mint_periodically, print_state),
@@ -78,11 +70,7 @@ fn main() {
     }
 }
 
-fn announce_when_connected(
-    status: Res<SyncStatus>,
-    args: Res<Args>,
-    mut said: Local<bool>,
-) {
+fn announce_when_connected(status: Res<SyncStatus>, args: Res<Args>, mut said: Local<bool>) {
     if !*said {
         if let SyncStatus::Connected { peer } = *status {
             println!("[{}] welcome — assigned peer={peer}", args.label);
@@ -91,10 +79,8 @@ fn announce_when_connected(
     }
 }
 
-// Frame-based scheduling avoids any dependency on Bevy's Time plugin
-// being wired up — at the configured 60-ish fps tick, 120 frames ≈ 2 s.
 fn mint_periodically(
-    mut graph: ResMut<SyncedGraph>,
+    mut commands: Commands,
     status: Res<SyncStatus>,
     mut frame: Local<u32>,
     mut counter: ResMut<LocalCounter>,
@@ -103,8 +89,6 @@ fn mint_periodically(
     *frame += 1;
     if *frame == 1 {
         println!("[{}] mint_periodically system started running", args.label);
-        use std::io::Write;
-        let _ = std::io::stdout().flush();
     }
     if !status.is_connected() {
         return;
@@ -112,18 +96,16 @@ fn mint_periodically(
     if *frame % 120 != 0 {
         return;
     }
-    let id = graph.add_node();
+    commands.spawn(DemoNode);
     counter.0 += 1;
     println!(
-        "[{}] minted node {id}  (locally total: {}, frame {})",
+        "[{}] spawned node (locally total: {}, frame {})",
         args.label, counter.0, *frame
     );
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
 }
 
 fn print_state(
-    graph: Res<SyncedGraph>,
+    nodes: Query<(), With<DemoNode>>,
     args: Res<Args>,
     counter: Res<LocalCounter>,
     mut frame: Local<u32>,
@@ -133,12 +115,9 @@ fn print_state(
         return;
     }
     println!(
-        "[{}] room: nodes={} applied_seq={} (locally minted: {})",
+        "[{}] room: nodes={} (locally minted: {})",
         args.label,
-        graph.node_count(),
-        graph.applied_seq(),
+        nodes.iter().count(),
         counter.0
     );
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
 }

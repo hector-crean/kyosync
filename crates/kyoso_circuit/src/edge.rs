@@ -12,16 +12,14 @@
 //!   (length, impedance) during routing. Pure metadata for the
 //!   schematic; consumed by downstream layout tooling.
 //!
-//! Each kind has a per-variant ZST marker implementing
-//! [`kyoso_graph_sync::EdgeCategoryMarker`], which maps to a
-//! [`kyoso_crdt::EdgeCategory::Custom("circuit-…")`] string on the wire.
-//! On inbound projection,
-//! [`kyoso_graph_sync::SyncedEdgeCategoryPlugin`] re-attaches the matching
-//! marker so remote peers see the typed edge.
+//! Each kind has a per-variant ZST marker that is currently
+//! **local-only** — the slim `kyoso_graph_sync::GraphSyncPlugin`
+//! replicates edge presence + endpoints but not category. Apps that
+//! need cross-peer category sync can derive `SchemaSync` on a custom
+//! per-edge component and register it via
+//! `SchemaSyncedComponentPlugin::<EdgeTarget, _>`.
 
 use bevy::prelude::*;
-use kyoso_graph_crdt::EdgeCategory;
-use kyoso_graph_sync::EdgeCategoryMarker;
 use serde::{Deserialize, Serialize};
 
 /// sRGB triple (0..=1) — kept feature-free so the domain crate doesn't
@@ -82,22 +80,16 @@ impl CircuitEdgeKind {
 // ---------------------------------------------------------------------------
 
 macro_rules! circuit_edge_marker {
-    ($name:ident, $category_str:literal) => {
+    ($name:ident) => {
         #[derive(Component, Default, Clone, Debug, PartialEq, Eq, Reflect)]
         #[reflect(Component, Default)]
         pub struct $name;
-
-        impl EdgeCategoryMarker for $name {
-            fn category() -> EdgeCategory {
-                EdgeCategory::Custom(::std::string::String::from($category_str))
-            }
-        }
     };
 }
 
-circuit_edge_marker!(WireMarker, "circuit-wire");
-circuit_edge_marker!(SameNetMarker, "circuit-same-net");
-circuit_edge_marker!(DifferentialPairMarker, "circuit-diff-pair");
+circuit_edge_marker!(WireMarker);
+circuit_edge_marker!(SameNetMarker);
+circuit_edge_marker!(DifferentialPairMarker);
 
 /// Insert the right marker component for `kind` onto an edge entity.
 /// Called by the connect tool when spawning a typed edge.

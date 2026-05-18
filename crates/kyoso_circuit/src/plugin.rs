@@ -19,7 +19,6 @@ use kyoso_sync::SyncTransportPlugin;
 
 use crate::components::{Capacitor, Ground, Inductor, Resistor, VoltageSource};
 use crate::layer::OnLayer;
-use crate::{CircuitEdge, CircuitNode};
 
 pub struct KyosoCircuitPlugin {
     pub server_url: String,
@@ -33,7 +32,7 @@ impl Plugin for KyosoCircuitPlugin {
         // (transport + graph sync + 5 components + Transform + OnLayer).
         app.add_plugins((
             SyncTransportPlugin::new(self.server_url.clone(), self.room.clone()),
-            GraphSyncPlugin::<CircuitNode, CircuitEdge>::default(),
+            GraphSyncPlugin::default(),
             SchemaSyncedComponentPlugin::<NodeTarget, Resistor>::default(),
             SchemaSyncedComponentPlugin::<NodeTarget, Capacitor>::default(),
             SchemaSyncedComponentPlugin::<NodeTarget, Inductor>::default(),

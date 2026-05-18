@@ -15,15 +15,20 @@ use kyoso_graph::tree::{OrderKey, TreeEdge, TreePlugin};
 use kyoso_graph::{GraphCommand, GraphManagerPlugin, GraphMessage};
 use kyoso_graph_sync::{ClientSyncEngine, EntityCrdtIndex};
 use kyoso_server::{AppState, app};
-use kyoso_graph_sync::{GraphSyncPlugin, SchemaSync, NodeTarget, SchemaSyncedComponentPlugin};
+use kyoso_graph_sync::{
+    EdgeEndpoints, GraphSyncPlugin, NodePresence, NodeTarget, SchemaSync,
+    SchemaSyncedComponentPlugin,
+};
 use kyoso_sync::SyncStatus;
 use tokio::net::TcpListener;
 
 #[derive(Component, Default, Debug, Clone, Reflect)]
 #[reflect(Component, Default)]
+#[require(NodePresence)]
 struct N;
 #[derive(Component, Default, Debug, Clone, Reflect)]
 #[reflect(Component, Default)]
+#[require(EdgeEndpoints)]
 struct E;
 
 type SyncedGraph = ClientSyncEngine;
@@ -41,7 +46,7 @@ async fn spawn_server() -> SocketAddr {
 
 fn build_app(server: SocketAddr, room: &str) -> App {
     let mut app = App::new();
-    app.add_plugins(GraphSyncPlugin::<N, E>::new(
+    app.add_plugins(GraphSyncPlugin::new(
         format!("ws://{server}/ws"),
         room,
     ));
@@ -56,7 +61,7 @@ fn build_app_with_tree(server: SocketAddr, room: &str) -> App {
     app.add_plugins((
         GraphManagerPlugin::<N, E>::new(),
         TreePlugin,
-        GraphSyncPlugin::<N, E>::new(format!("ws://{server}/ws"), room),
+        GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
     ));
     app
 }
@@ -285,6 +290,7 @@ fn collect_child_keys(app: &mut App) -> Vec<String> {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "Named")]
+#[require(NodePresence)]
 struct Named {
     name: String,
 }
@@ -295,6 +301,7 @@ struct Named {
 #[derive(Component, Default, Debug, Clone, PartialEq, Reflect, SchemaSync)]
 #[reflect(Component, Default)]
 #[schema(name = "Styled")]
+#[require(NodePresence)]
 struct Styled {
     name: String,
     color: String,
@@ -311,7 +318,7 @@ fn build_named_app(server: SocketAddr, room: &str) -> App {
     app.add_plugins((
         GraphManagerPlugin::<Named, EdgeMeta>::new(),
         TreePlugin,
-        GraphSyncPlugin::<Named, EdgeMeta>::new(format!("ws://{server}/ws"), room),
+        GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
         // Field sync is opt-in per component: `Named` rides the typed
         // schema path; `EdgeMeta` carries no synced fields so we don't
         // register it.
@@ -567,7 +574,7 @@ async fn extra_node_component_syncs_transform() {
         let build = |room: &str| -> App {
             let mut app = App::new();
             app.add_plugins((
-                GraphSyncPlugin::<N, E>::new(format!("ws://{addr}/ws"), room),
+                GraphSyncPlugin::new(format!("ws://{addr}/ws"), room),
                 SchemaSyncedComponentPlugin::<NodeTarget, Transform>::default(),
             ));
             app
@@ -630,13 +637,13 @@ async fn per_property_lww_no_loss() {
         let mut a = App::new();
         a.add_plugins((
             GraphManagerPlugin::<Styled, EdgeMeta>::new(),
-            GraphSyncPlugin::<Styled, EdgeMeta>::new(format!("ws://{addr}/ws"), "lww-room"),
+            GraphSyncPlugin::new(format!("ws://{addr}/ws"), "lww-room"),
             SchemaSyncedComponentPlugin::<NodeTarget, Styled>::default(),
         ));
         let mut b = App::new();
         b.add_plugins((
             GraphManagerPlugin::<Styled, EdgeMeta>::new(),
-            GraphSyncPlugin::<Styled, EdgeMeta>::new(format!("ws://{addr}/ws"), "lww-room"),
+            GraphSyncPlugin::new(format!("ws://{addr}/ws"), "lww-room"),
             SchemaSyncedComponentPlugin::<NodeTarget, Styled>::default(),
         ));
 
@@ -861,125 +868,11 @@ async fn node_attribute_replication() {
 
 
 // ---------------------------------------------------------------------------
-// Per-category typed-edge dispatch
+// Per-category typed-edge dispatch — removed with `SyncedEdgeCategoryPlugin`.
+// Per-category semantics now belong at the application layer: spawn the
+// matching marker component locally and (if it needs to replicate) add a
+// `SchemaSyncedComponentPlugin::<EdgeTarget, _>` for it.
 // ---------------------------------------------------------------------------
-
-#[derive(Component, Default, Debug, Clone, Reflect)]
-#[reflect(Component, Default)]
-struct InstanceOfMarker;
-
-impl kyoso_graph_sync::EdgeCategoryMarker for InstanceOfMarker {
-    fn category() -> kyoso_graph_crdt::EdgeCategory {
-        kyoso_graph_crdt::EdgeCategory::InstanceOf
-    }
-}
-
-#[derive(Component, Default, Debug, Clone, Reflect)]
-#[reflect(Component, Default)]
-struct PrototypeLinkMarker;
-
-impl kyoso_graph_sync::EdgeCategoryMarker for PrototypeLinkMarker {
-    fn category() -> kyoso_graph_crdt::EdgeCategory {
-        kyoso_graph_crdt::EdgeCategory::PrototypeLink
-    }
-}
-
-fn build_categorized_app(server: SocketAddr, room: &str) -> App {
-    let mut app = App::new();
-    app.add_plugins((
-        GraphSyncPlugin::<N, E>::new(format!("ws://{server}/ws"), room),
-        kyoso_graph_sync::SyncedEdgeCategoryPlugin::<N, E, InstanceOfMarker>::default(),
-        kyoso_graph_sync::SyncedEdgeCategoryPlugin::<N, E, PrototypeLinkMarker>::default(),
-    ));
-    app
-}
-
-/// Two apps; A spawns edges with different category markers; B receives
-/// them with the matching markers attached.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn per_category_edges_replicate_with_correct_markers() {
-    let addr = spawn_server().await;
-    let join = tokio::task::spawn_blocking(move || {
-        let mut a = build_categorized_app(addr, "categorized-room");
-        let mut b = build_categorized_app(addr, "categorized-room");
-
-        pump_until(
-            &mut [&mut a, &mut b],
-            Duration::from_secs(2),
-            "welcome",
-            |apps| apps.iter_mut().all(|app| sync_status(app).is_connected()),
-        );
-
-        // Spawn two nodes (A's pending) plus two edges with different
-        // category markers.
-        let (a_n1, a_n2) = {
-            let world = a.world_mut();
-            let n1 = world.spawn(N).id();
-            let n2 = world.spawn(N).id();
-            (n1, n2)
-        };
-        // Pump once so detect_added_nodes runs and registers the nodes
-        // before we spawn edges referencing them via `EntityCrdtIndex`.
-        a.update();
-
-        // Spawn two edges: one InstanceOf, one PrototypeLink.
-        a.world_mut().spawn((
-            kyoso_graph::components::EdgeFrom(a_n1),
-            kyoso_graph::components::EdgeTo(a_n2),
-            E,
-            InstanceOfMarker,
-        ));
-        a.world_mut().spawn((
-            kyoso_graph::components::EdgeFrom(a_n1),
-            kyoso_graph::components::EdgeTo(a_n2),
-            E,
-            PrototypeLinkMarker,
-        ));
-
-        pump_until(
-            &mut [&mut a, &mut b],
-            Duration::from_secs(3),
-            "B sees both edges with the correct category markers",
-            |apps| {
-                let world = apps[1].world_mut();
-                let mut q_inst = world.query::<&InstanceOfMarker>();
-                let mut q_proto = world.query::<&PrototypeLinkMarker>();
-                let inst_count = q_inst.iter(world).count();
-                let proto_count = q_proto.iter(world).count();
-                inst_count == 1 && proto_count == 1
-            },
-        );
-
-        // Verify B's edges carry the expected categories via the
-        // EntityCrdtIndex + engine.edge_category lookups.
-        let world = b.world_mut();
-        let mut q_inst = world.query_filtered::<Entity, With<InstanceOfMarker>>();
-        let inst_entity = q_inst.single(world).expect("one InstanceOf edge on B");
-        let mut q_proto = world.query_filtered::<Entity, With<PrototypeLinkMarker>>();
-        let proto_entity = q_proto.single(world).expect("one PrototypeLink edge on B");
-
-        let inst_id = b
-            .world()
-            .resource::<kyoso_graph_sync::EntityCrdtIndex>()
-            .edge_id(inst_entity)
-            .expect("InstanceOf edge has CrdtId");
-        let proto_id = b
-            .world()
-            .resource::<kyoso_graph_sync::EntityCrdtIndex>()
-            .edge_id(proto_entity)
-            .expect("PrototypeLink edge has CrdtId");
-        let engine = b.world().resource::<SyncedGraph>();
-        assert_eq!(
-            engine.edge_category(inst_id),
-            Some(&kyoso_graph_crdt::EdgeCategory::InstanceOf),
-        );
-        assert_eq!(
-            engine.edge_category(proto_id),
-            Some(&kyoso_graph_crdt::EdgeCategory::PrototypeLink),
-        );
-    });
-    join.await.expect("worker panic");
-}
 
 // ---------------------------------------------------------------------------
 // Typed-schema sync (SchemaSync + SchemaSyncedComponentPlugin)
@@ -1005,7 +898,7 @@ mod typed_schema {
     fn build_typed_app(server: SocketAddr, room: &str) -> App {
         let mut app = App::new();
         app.add_plugins((
-            GraphSyncPlugin::<TypedNode, E>::new(format!("ws://{server}/ws"), room),
+            GraphSyncPlugin::new(format!("ws://{server}/ws"), room),
             SchemaSyncedComponentPlugin::<NodeTarget, TypedNode>::default(),
         ));
         app
