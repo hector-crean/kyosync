@@ -27,12 +27,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "code.md",
+                "file": "code-2.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "code"
+              "title": "code-2"
             }
           }
         ],
@@ -197,8 +197,12 @@
   },
   "active": "9e356c684106176d",
   "lastOpenFiles": [
-    "system-design/crdt.md",
+    "component-sync.html",
+    "code-2.html",
+    "schema-synced-component-plugin.md",
+    "code-2.md",
     "code.md",
+    "system-design/crdt.md",
     "system-design/collaboration from first principles.md",
     "system-design/backend-vs-document.md",
     "system-design/architecture-evolution.md",

@@ -1,0 +1,1762 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>SchemaSync — the full stack</title>
+        <link
+            id="hl-light"
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-light.min.css"
+        />
+        <link
+            id="hl-dark"
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css"
+        />
+        <script>
+            (function () {
+                var t = localStorage.getItem("theme");
+                if (!t) {
+                    t = window.matchMedia("(prefers-color-scheme: dark)")
+                        .matches
+                        ? "dark"
+                        : "light";
+                }
+                document.documentElement.setAttribute("data-theme", t);
+            })();
+        </script>
+        <style>
+            :root {
+                --bg: #ffffff;
+                --bg-elev: #f6f8fa;
+                --text: #1f2328;
+                --text-muted: #656d76;
+                --border: #d0d7de;
+                --accent: #0969da;
+                --stage-bg: #ddf4ff;
+                --stage-text: #0969da;
+                --code-bg: #f6f8fa;
+                --diagram-bg: #f6f8fa;
+                --arrow: #656d76;
+                --peerA: #e8f5e9;
+                --peerB: #e3f2fd;
+                --wire-bg: #fff8e1;
+            }
+            [data-theme="dark"] {
+                --bg: #0d1117;
+                --bg-elev: #161b22;
+                --text: #e6edf3;
+                --text-muted: #8d96a0;
+                --border: #30363d;
+                --accent: #2f81f7;
+                --stage-bg: #1f2d3a;
+                --stage-text: #79c0ff;
+                --code-bg: #161b22;
+                --diagram-bg: #161b22;
+                --arrow: #8d96a0;
+                --peerA: #143218;
+                --peerB: #0c2742;
+                --wire-bg: #3a2c00;
+            }
+            [data-theme="light"] #hl-dark {
+                disabled: true;
+            }
+            [data-theme="dark"] #hl-light {
+                disabled: true;
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+            html,
+            body {
+                margin: 0;
+                padding: 0;
+            }
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+                    sans-serif;
+                font-size: 16px;
+                line-height: 1.65;
+                background: var(--bg);
+                color: var(--text);
+                -webkit-font-smoothing: antialiased;
+            }
+            .layout {
+                display: grid;
+                grid-template-columns: 240px minmax(0, 1fr);
+                max-width: 1240px;
+                margin: 0 auto;
+            }
+            @media (max-width: 900px) {
+                .layout {
+                    grid-template-columns: 1fr;
+                }
+                nav.toc {
+                    display: none;
+                }
+            }
+
+            nav.toc {
+                position: sticky;
+                top: 0;
+                align-self: start;
+                max-height: 100vh;
+                overflow-y: auto;
+                padding: 24px 16px;
+                font-size: 13px;
+                border-right: 1px solid var(--border);
+            }
+            nav.toc strong {
+                display: block;
+                color: var(--text);
+                font-size: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.6px;
+                margin-bottom: 10px;
+                color: var(--text-muted);
+            }
+            nav.toc a {
+                display: block;
+                color: var(--text-muted);
+                text-decoration: none;
+                padding: 3px 0 3px 10px;
+                border-left: 2px solid transparent;
+            }
+            nav.toc a:hover {
+                color: var(--text);
+                border-left-color: var(--border);
+            }
+            nav.toc a.sub {
+                padding-left: 24px;
+                font-size: 12px;
+            }
+
+            main {
+                padding: 32px 40px 80px;
+                min-width: 0;
+            }
+
+            h1 {
+                font-size: 30px;
+                margin: 0 0 6px;
+                letter-spacing: -0.6px;
+                font-weight: 700;
+            }
+            h2 {
+                font-size: 21px;
+                margin: 48px 0 14px;
+                padding-top: 28px;
+                border-top: 1px solid var(--border);
+                letter-spacing: -0.3px;
+            }
+            h2:first-of-type {
+                border-top: none;
+                padding-top: 0;
+                margin-top: 32px;
+            }
+            h3 {
+                font-size: 16px;
+                margin: 28px 0 8px;
+            }
+            p {
+                margin: 0 0 14px;
+            }
+
+            .subtitle {
+                color: var(--text-muted);
+                font-size: 15px;
+                margin-bottom: 24px;
+            }
+
+            header.docheader {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 24px;
+                margin-bottom: 8px;
+            }
+
+            button.theme {
+                background: var(--bg-elev);
+                border: 1px solid var(--border);
+                color: var(--text);
+                border-radius: 6px;
+                padding: 6px 14px;
+                cursor: pointer;
+                font-size: 13px;
+                font-family: inherit;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+            }
+            button.theme:hover {
+                background: var(--border);
+            }
+
+            pre,
+            code {
+                font-family:
+                    "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono",
+                    monospace;
+                font-size: 13px;
+            }
+            code:not(pre code) {
+                background: var(--code-bg);
+                padding: 1px 5px;
+                border-radius: 4px;
+                font-size: 12.5px;
+            }
+            pre {
+                background: var(--code-bg);
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 14px 16px;
+                overflow-x: auto;
+                margin: 10px 0 18px;
+                line-height: 1.55;
+            }
+            pre code {
+                background: none;
+                padding: 0;
+                font-size: 13px;
+            }
+
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 10px 0 20px;
+                font-size: 14px;
+            }
+            th,
+            td {
+                border: 1px solid var(--border);
+                padding: 8px 12px;
+                text-align: left;
+                vertical-align: top;
+            }
+            th {
+                background: var(--bg-elev);
+                font-weight: 600;
+                font-size: 13px;
+            }
+            td code {
+                font-size: 12px;
+            }
+
+            /* stage badges */
+            a.stage,
+            span.stage {
+                display: inline-block;
+                background: var(--stage-bg);
+                color: var(--stage-text);
+                font-family: "SF Mono", Menlo, monospace;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 1px 7px;
+                border-radius: 4px;
+                letter-spacing: 0.4px;
+                text-decoration: none;
+                vertical-align: 1px;
+                border: 1px solid transparent;
+            }
+            a.stage:hover {
+                border-color: var(--stage-text);
+            }
+
+            /* stack diagram */
+            .stack {
+                display: flex;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 0;
+                margin: 18px 0 26px;
+                max-width: 760px;
+            }
+            .stack .layer {
+                background: var(--diagram-bg);
+                border: 1px solid var(--border);
+                border-radius: 7px;
+                padding: 10px 14px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+            }
+            .stack .layer .name {
+                font-family: "SF Mono", Menlo, monospace;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            .stack .layer .note {
+                color: var(--text-muted);
+                font-size: 12px;
+                font-style: italic;
+            }
+            .stack .arrow {
+                align-self: center;
+                width: 2px;
+                height: 28px;
+                background: var(--arrow);
+                position: relative;
+            }
+            .stack .arrow::after {
+                content: "";
+                position: absolute;
+                bottom: -1px;
+                left: -4px;
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid var(--arrow);
+            }
+            .stack .arrow .label {
+                position: absolute;
+                left: 14px;
+                top: 50%;
+                transform: translateY(-50%);
+                white-space: nowrap;
+                font-family: "SF Mono", Menlo, monospace;
+                font-size: 11px;
+                color: var(--text-muted);
+            }
+
+            /* pipeline */
+            .pipeline {
+                background: var(--diagram-bg);
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 16px 18px;
+                margin: 16px 0 24px;
+                font-family: "SF Mono", Menlo, monospace;
+                font-size: 13px;
+                line-height: 1.85;
+                max-width: 560px;
+            }
+            .pipeline .phase {
+                color: var(--text-muted);
+            }
+            .pipeline .sys {
+                font-weight: 600;
+                color: var(--accent);
+            }
+            .pipeline .down {
+                color: var(--arrow);
+                text-align: center;
+                display: block;
+                margin: 2px 0;
+            }
+
+            /* trace */
+            .trace {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 0;
+                margin: 18px 0 24px;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                overflow: hidden;
+                font-family: "SF Mono", Menlo, monospace;
+                font-size: 12.5px;
+            }
+            .trace .col-header {
+                padding: 8px 14px;
+                font-weight: 600;
+                font-size: 13px;
+                font-family: inherit;
+                border-bottom: 1px solid var(--border);
+                text-align: center;
+            }
+            .trace .col-header.a {
+                background: var(--peerA);
+                border-right: 1px solid var(--border);
+            }
+            .trace .col-header.b {
+                background: var(--peerB);
+            }
+            .trace .step {
+                padding: 10px 14px;
+                border-top: 1px solid var(--border);
+                line-height: 1.6;
+            }
+            .trace .step.a {
+                border-right: 1px solid var(--border);
+            }
+            .trace .step.b {
+            }
+            .trace .step.empty {
+                background: var(--bg-elev);
+                opacity: 0.45;
+            }
+            .trace .step.wire {
+                grid-column: 1 / -1;
+                background: var(--wire-bg);
+                text-align: center;
+                font-weight: 600;
+                padding: 9px 14px;
+            }
+            [data-theme="dark"] .trace .step.wire {
+                color: #ffd966;
+            }
+            .trace .step-num {
+                display: inline-block;
+                width: 22px;
+                color: var(--text-muted);
+                font-weight: 600;
+            }
+            .trace .step-body {
+                display: inline;
+            }
+            .trace .step .stage {
+                margin-left: 4px;
+            }
+
+            /* responsibilities */
+            table.responsibilities td:first-child {
+                font-family: "SF Mono", Menlo, monospace;
+                font-size: 12px;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+
+            a {
+                color: var(--accent);
+                text-decoration: none;
+            }
+            a:hover {
+                text-decoration: underline;
+            }
+
+            .callout {
+                border-left: 3px solid var(--accent);
+                background: var(--bg-elev);
+                padding: 10px 14px;
+                border-radius: 0 6px 6px 0;
+                margin: 14px 0;
+                font-size: 14px;
+            }
+
+            .muted {
+                color: var(--text-muted);
+            }
+            footer.docfoot {
+                margin-top: 60px;
+                padding-top: 20px;
+                border-top: 1px solid var(--border);
+                color: var(--text-muted);
+                font-size: 13px;
+            }
+
+            /* anchor offset for sticky-ish nav */
+            :target {
+                scroll-margin-top: 12px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="layout">
+            <nav class="toc">
+                <strong>Sections</strong>
+                <a href="#bigpicture">Big picture</a>
+                <a href="#example">Running example</a>
+                <a href="#stack">The full stack</a>
+                <a href="#stage1">Stage 1 — SchemaSync</a>
+                <a href="#s1a" class="sub">1a · companion struct</a>
+                <a href="#s1b" class="sub">1b · SchemaSync impl</a>
+                <a href="#s1c" class="sub">1c · nesting hook</a>
+                <a href="#stage2">Stage 2 — DeriveCrdt</a>
+                <a href="#s2a" class="sub">2a · Mut enum</a>
+                <a href="#s2b" class="sub">2b · Delta enum</a>
+                <a href="#s2c" class="sub">2c · Lattice</a>
+                <a href="#s2d" class="sub">2d · Crdt</a>
+                <a href="#s2e" class="sub">2e · SchemaApply</a>
+                <a href="#s2f" class="sub">2f · IntoWireOp</a>
+                <a href="#annotations">Field annotations</a>
+                <a href="#runtime">Runtime plugin</a>
+                <a href="#systems">Four systems</a>
+                <a href="#trace">End-to-end trace</a>
+                <a href="#snapshot">Snapshot / hydration</a>
+                <a href="#assembly">Plugin assembly</a>
+                <a href="#responsibilities">Responsibility split</a>
+            </nav>
+
+            <main>
+                <header class="docheader">
+                    <div>
+                        <h1>SchemaSync — the full stack</h1>
+                        <p class="subtitle">
+                            Macro pipeline, runtime plugin, and one end-to-end
+                            edit traced through every layer.
+                        </p>
+                    </div>
+                    <button class="theme" onclick="toggleTheme()" id="themeBtn">
+                        Theme
+                    </button>
+                </header>
+
+                <section id="bigpicture">
+                    <h2>Big picture</h2>
+                    <p>
+                        A two-stage derive pipeline feeding a model-agnostic
+                        runtime plugin. The full stack is:
+                    </p>
+                    <ol>
+                        <li>
+                            <strong><code>SchemaSync</code> derive</strong> (in
+                            <code>kyoso_sync_derive</code>) — emits a
+                            <em>companion struct</em>
+                            <code>…Schema</code> alongside the Bevy component,
+                            stamps
+                            <code>#[derive(::kyoso_crdt::DeriveCrdt)]</code>
+                            onto it, and emits the <code>SchemaSync</code> +
+                            <code>SchemaField</code> impls that bridge Bevy ⇄
+                            schema.
+                        </li>
+                        <li>
+                            <strong><code>DeriveCrdt</code> derive</strong>
+                            (<code>kyoso_crdt_derive</code>; the underlying
+                            macro is <code>#[proc_macro_derive(Crdt)]</code>) —
+                            the compiler picks up the stamped attribute and
+                            emits the <code>…SchemaMut</code> /
+                            <code>…SchemaDelta</code> enums, plus
+                            <code>Lattice</code>, <code>Crdt</code>,
+                            <code>SchemaApply</code>,
+                            <code>IntoWireOp</code> impls on the companion
+                            struct.
+                        </li>
+                        <li>
+                            <strong
+                                ><code
+                                    >SchemaSyncedComponentPlugin</code
+                                ></strong
+                            >
+                            (in <code>kyoso_sync</code>) — a Bevy plugin generic
+                            over <code>(SchemaTarget, SchemaSync)</code> that
+                            schedules four systems to drive the diff → wire →
+                            apply → writeback cycle, with
+                            <code>SchemaTarget</code> as the seam that binds the
+                            pipeline to a particular CRDT model.
+                        </li>
+                    </ol>
+                    <p>
+                        So <code>SchemaSync</code> never calls
+                        <code>DeriveCrdt</code> directly — it
+                        <em
+                            >generates source text containing a derive
+                            attribute</em
+                        >, and the compiler's normal expansion loop picks it up.
+                        The runtime plugin in turn never names the
+                        macro-generated types directly — it works through the
+                        traits the two derives populate.
+                    </p>
+                </section>
+
+                <section id="example">
+                    <h2>The running example</h2>
+                    <pre><code class="language-rust">// crates/kyoso_figma/src/text.rs
+#[derive(Component, Default, Clone, Debug, PartialEq, Reflect, SchemaSync)]
+#[reflect(Component, Default)]
+#[schema(name = "Text")]
+pub struct Text {
+    #[crdt(sequence)]  pub content: String,      // RGA sequence-of-char
+    #[crdt(nested)]    pub style:   TypeStyle,   // schema-in-schema
+    pub fills: Vec&lt;Paint&gt;,                       // no #[crdt(...)] ⇒ whole-list LWW
+}</code></pre>
+                    <p>
+                        Three different <code>#[crdt(...)]</code> modes in one
+                        struct: <code>sequence</code>, <code>nested</code>, and
+                        the implicit LWW default. <code>TypeStyle</code> itself
+                        derives <code>SchemaSync</code> with four plain-LWW
+                        fields, so it slots into <code>Text</code> as a nested
+                        CRDT.
+                    </p>
+                </section>
+
+                <section id="stack">
+                    <h2>The full stack, top to bottom</h2>
+                    <div class="stack">
+                        <div class="layer">
+                            <span class="name">Bevy component (Text)</span
+                            ><span class="note">user-facing API</span>
+                        </div>
+                        <div class="arrow">
+                            <span class="label">SchemaSync</span>
+                        </div>
+                        <div class="layer">
+                            <span class="name"
+                                >Companion schema struct (TextSchema)</span
+                            ><span class="note"
+                                >parallel struct, CRDT wrappers</span
+                            >
+                        </div>
+                        <div class="arrow">
+                            <span class="label"
+                                >Crdt · SchemaApply · IntoWireOp</span
+                            >
+                        </div>
+                        <div class="layer">
+                            <span class="name"
+                                >Typed mutation / delta enums</span
+                            ><span class="note"
+                                >TextSchemaMut · TextSchemaDelta</span
+                            >
+                        </div>
+                        <div class="arrow">
+                            <span class="label">WireDelta + Path</span>
+                        </div>
+                        <div class="layer">
+                            <span class="name"
+                                >Property op (CrdtId, Path, WireDelta)</span
+                            ><span class="note">universal payload</span>
+                        </div>
+                        <div class="arrow">
+                            <span class="label">SchemaTarget</span>
+                        </div>
+                        <div class="layer">
+                            <span class="name"
+                                >Model op envelope (Op&lt;OpKind&gt;)</span
+                            ><span class="note">model-specific</span>
+                        </div>
+                        <div class="arrow">
+                            <span class="label"
+                                >EnvelopeClientMsg / ServerMsg (postcard)</span
+                            >
+                        </div>
+                        <div class="layer">
+                            <span class="name"
+                                >WebSocket (SyncTransportPlugin /
+                                WsClient)</span
+                            ><span class="note">network</span>
+                        </div>
+                    </div>
+                    <p>
+                        Each arrow names the trait or function that crosses it.
+                        The top two arrows are the macro-generated bridges. The
+                        bottom four are the runtime layer.
+                    </p>
+                </section>
+
+                <section id="stage1">
+                    <h2>
+                        Stage 1 — what <code>#[derive(SchemaSync)]</code> emits
+                    </h2>
+                    <p>
+                        The macro
+                        (<code>crates/kyoso_sync_derive/src/lib.rs:255-310</code>)
+                        produces three items.
+                    </p>
+
+                    <h3 id="s1a">
+                        <span class="stage">1a</span> The companion schema
+                        struct
+                    </h3>
+                    <pre><code class="language-rust">#[derive(
+    ::core::clone::Clone,
+    ::core::fmt::Debug,
+    ::core::default::Default,
+    ::core::cmp::PartialEq,
+    ::kyoso_crdt::DeriveCrdt,        // ◀── THIS is the transitive trigger
+)]
+pub struct TextSchema {
+    pub content: ::kyoso_crdt::types::Sequence&lt;char&gt;,
+    pub style:   &lt;TypeStyle as ::kyoso_sync::SchemaSync&gt;::Schema,
+    pub fills:   ::kyoso_crdt::types::LwwRegister&lt;Vec&lt;Paint&gt;&gt;,
+}</code></pre>
+                    <p>
+                        Each Bevy field type <code>T</code> is wrapped per its
+                        CRDT kind:
+                    </p>
+                    <ul>
+                        <li>LWW → <code>LwwRegister&lt;T&gt;</code></li>
+                        <li>
+                            <code>sequence</code> over <code>String</code> →
+                            <code>Sequence&lt;char&gt;</code>; over
+                            <code>Vec&lt;T&gt;</code> →
+                            <code>Sequence&lt;T&gt;</code>
+                        </li>
+                        <li>
+                            <code>nested</code> →
+                            <code>&lt;T as SchemaSync&gt;::Schema</code> (the
+                            field's own companion struct, recursively)
+                        </li>
+                    </ul>
+                    <p>
+                        The field-kind table
+                        (<code>kyoso_sync_derive/src/lib.rs:182-227</code>) is
+                        the <em>only</em> place the
+                        <code>#[crdt(...)]</code> attribute matters; it picks
+                        the wrapper type and nothing else.
+                    </p>
+
+                    <h3 id="s1b">
+                        <span class="stage">1b</span>
+                        <code>impl SchemaSync for Text</code>
+                    </h3>
+                    <pre><code class="language-rust">impl ::kyoso_sync::SchemaSync for Text {
+    type Schema = TextSchema;
+    const SCHEMA_NAME: &amp;'static str = "Text";   // from #[schema(name = "Text")]
+
+    fn diff(&amp;self, doc: &amp;Self::Schema) -&gt; ::kyoso_sync::SchemaMutations&lt;Self&gt; {
+        #[allow(unused_variables)]
+        let default = &lt;Self as ::core::default::Default&gt;::default();
+        let mut out = ::std::vec::Vec::new();
+
+        // One uniform arm per field — delegates to that wrapper type's
+        // SchemaField impl. `&amp;default.content` is the LWW echo-guard
+        // baseline (Sequence ignores it).
+        out.extend(
+            &lt;::kyoso_crdt::types::Sequence&lt;char&gt;
+                as ::kyoso_sync::SchemaField&lt;String&gt;&gt;::diff(
+                &amp;doc.content, &amp;self.content, &amp;default.content,
+            )
+            .into_iter()
+            .map(TextSchemaMut::Content),     // ◀── variant from Stage 2's enum
+        );
+        out.extend(
+            &lt;&lt;TypeStyle as ::kyoso_sync::SchemaSync&gt;::Schema
+                as ::kyoso_sync::SchemaField&lt;TypeStyle&gt;&gt;::diff(
+                &amp;doc.style, &amp;self.style, &amp;default.style,
+            )
+            .into_iter()
+            .map(TextSchemaMut::Style),
+        );
+        out.extend(
+            &lt;::kyoso_crdt::types::LwwRegister&lt;Vec&lt;Paint&gt;&gt;
+                as ::kyoso_sync::SchemaField&lt;Vec&lt;Paint&gt;&gt;&gt;::diff(
+                &amp;doc.fills, &amp;self.fills, &amp;default.fills,
+            )
+            .into_iter()
+            .map(TextSchemaMut::Fills),
+        );
+        out
+    }
+
+    fn write_back(&amp;mut self, schema: &amp;Self::Schema) {
+        &lt;::kyoso_crdt::types::Sequence&lt;char&gt;
+            as ::kyoso_sync::SchemaField&lt;String&gt;&gt;::project_to(
+            &amp;schema.content, &amp;mut self.content,
+        );
+        &lt;&lt;TypeStyle as ::kyoso_sync::SchemaSync&gt;::Schema
+            as ::kyoso_sync::SchemaField&lt;TypeStyle&gt;&gt;::project_to(
+            &amp;schema.style, &amp;mut self.style,
+        );
+        &lt;::kyoso_crdt::types::LwwRegister&lt;Vec&lt;Paint&gt;&gt;
+            as ::kyoso_sync::SchemaField&lt;Vec&lt;Paint&gt;&gt;&gt;::project_to(
+            &amp;schema.fills, &amp;mut self.fills,
+        );
+    }
+}</code></pre>
+                    <p>
+                        The per-field diff/projection logic isn't inlined here —
+                        it lives in the <code>SchemaField</code> impls in
+                        <code>crates/kyoso_sync/src/schema.rs:93-260</code>. The
+                        macro just emits <em>one delegation per field</em>. The
+                        LWW echo-guard (<code>schema.rs:99-107</code>) — "an
+                        empty register resolves to <code>baseline</code>, so a
+                        freshly-defaulted component emits nothing" — is what
+                        <code>&amp;default.fills</code> feeds.
+                    </p>
+
+                    <h3 id="s1c">
+                        <span class="stage">1c</span>
+                        <code>impl SchemaField&lt;Text&gt; for TextSchema</code>
+                        — the nesting hook
+                    </h3>
+                    <pre><code class="language-rust">impl ::kyoso_sync::SchemaField&lt;Text&gt; for TextSchema {
+    fn diff(&amp;self, component: &amp;Text, _baseline: &amp;Text)
+        -&gt; ::std::vec::Vec&lt;&lt;Self as ::kyoso_crdt::Crdt&gt;::Mutation&gt;
+    {
+        &lt;Text as ::kyoso_sync::SchemaSync&gt;::diff(component, self)
+    }
+    fn project_to(&amp;self, component: &amp;mut Text) {
+        &lt;Text as ::kyoso_sync::SchemaSync&gt;::write_back(component, self)
+    }
+}</code></pre>
+                    <p>
+                        This is what makes <code>#[crdt(nested)]</code> work.
+                        <code>Text</code>'s <code>style: TypeStyle</code> field
+                        uses <code>TypeStyleSchema</code> as its wrapper, and
+                        <code>TypeStyleSchema</code> (emitted by
+                        <code>derive(SchemaSync)</code> on
+                        <code>TypeStyle</code>) has exactly this impl. So in
+                        <a class="stage" href="#s1b">1b</a>'s diff arms,
+                        <code
+                            >&lt;TypeStyleSchema as
+                            SchemaField&lt;TypeStyle&gt;&gt;::diff</code
+                        >
+                        resolves to a recursive call into
+                        <code>TypeStyle</code>'s own
+                        <code>SchemaSync::diff</code> —
+                        <code>TypeStyle</code> looks like just another CRDT
+                        field to <code>Text</code>.
+                    </p>
+                </section>
+
+                <section id="stage2">
+                    <h2>
+                        Stage 2 — what <code>DeriveCrdt</code> emits on
+                        <code>TextSchema</code>
+                    </h2>
+                    <p>
+                        The compiler processes the stamped
+                        <code>#[derive(::kyoso_crdt::DeriveCrdt)]</code>.
+                        <code>crates/kyoso_crdt_derive/src/lib.rs:33-213</code>
+                        walks <code>TextSchema</code>'s three fields and emits
+                        <strong>five items</strong>.
+                    </p>
+
+                    <h3 id="s2a">
+                        <span class="stage">2a</span> The mutation enum
+                    </h3>
+                    <p>
+                        Referenced by <a class="stage" href="#s1b">1b</a>'s
+                        <code>.map(TextSchemaMut::Content)</code>.
+                    </p>
+                    <pre><code class="language-rust">#[derive(Clone, Debug, PartialEq)]
+pub enum TextSchemaMut {
+    Content(&lt;::kyoso_crdt::types::Sequence&lt;char&gt; as ::kyoso_crdt::Crdt&gt;::Mutation),
+    Style(&lt;&lt;TypeStyle as ::kyoso_sync::SchemaSync&gt;::Schema as ::kyoso_crdt::Crdt&gt;::Mutation),
+    Fills(&lt;::kyoso_crdt::types::LwwRegister&lt;Vec&lt;Paint&gt;&gt; as ::kyoso_crdt::Crdt&gt;::Mutation),
+}
+// e.g. &lt;LwwRegister&lt;Vec&lt;Paint&gt;&gt; as Crdt&gt;::Mutation resolves to LwwMut&lt;Vec&lt;Paint&gt;&gt; (Set(value))
+//      &lt;Sequence&lt;char&gt;          as Crdt&gt;::Mutation resolves to SequenceMut&lt;char&gt; (Insert/Delete)</code></pre>
+                    <p>
+                        Variant names are PascalCase'd field idents (<code
+                            >stroke_weight</code
+                        >
+                        → <code>StrokeWeight</code>; <code>font_family</code> →
+                        <code>FontFamily</code>). This is the bridge:
+                        <a class="stage" href="#s1b">1b</a> emits
+                        <code>TextSchemaMut::Content</code>
+                        <em>forward-referencing</em> an enum Stage 2 hasn't
+                        created yet — both passes finish before type-checking,
+                        so it resolves.
+                    </p>
+
+                    <h3 id="s2b">
+                        <span class="stage">2b</span> The delta enum (the
+                        on-wire shape)
+                    </h3>
+                    <pre><code class="language-rust">#[derive(Clone, Debug, PartialEq)]
+pub enum TextSchemaDelta {
+    Content(&lt;::kyoso_crdt::types::Sequence&lt;char&gt; as ::kyoso_crdt::Crdt&gt;::Delta),
+    Style(&lt;&lt;TypeStyle as ::kyoso_sync::SchemaSync&gt;::Schema as ::kyoso_crdt::Crdt&gt;::Delta),
+    Fills(&lt;::kyoso_crdt::types::LwwRegister&lt;Vec&lt;Paint&gt;&gt; as ::kyoso_crdt::Crdt&gt;::Delta),
+}</code></pre>
+
+                    <h3 id="s2c">
+                        <span class="stage">2c</span>
+                        <code>impl Lattice</code> — pointwise join
+                    </h3>
+                    <pre><code class="language-rust">impl ::kyoso_crdt::Lattice for TextSchema {
+    fn bottom() -&gt; Self {
+        Self {
+            content: &lt;::kyoso_crdt::types::Sequence&lt;char&gt;            as ::kyoso_crdt::Lattice&gt;::bottom(),
+            style:   &lt;&lt;TypeStyle as ::kyoso_sync::SchemaSync&gt;::Schema as ::kyoso_crdt::Lattice&gt;::bottom(),
+            fills:   &lt;::kyoso_crdt::types::LwwRegister&lt;Vec&lt;Paint&gt;&gt;    as ::kyoso_crdt::Lattice&gt;::bottom(),
+        }
+    }
+    fn join(&amp;mut self, other: Self) {
+        ::kyoso_crdt::Lattice::join(&amp;mut self.content, other.content);
+        ::kyoso_crdt::Lattice::join(&amp;mut self.style,   other.style);
+        ::kyoso_crdt::Lattice::join(&amp;mut self.fills,   other.fills);
+    }
+}</code></pre>
+
+                    <h3 id="s2d">
+                        <span class="stage">2d</span> <code>impl Crdt</code> —
+                        typed apply / mutate dispatch
+                    </h3>
+                    <pre><code class="language-rust">impl ::kyoso_crdt::Crdt for TextSchema {
+    type Mutation = TextSchemaMut;
+    type Delta    = TextSchemaDelta;
+
+    fn apply(&amp;mut self, delta: &amp;Self::Delta, ctx: &amp;::kyoso_crdt::CausalContext)
+        -&gt; ::core::result::Result&lt;(), ::kyoso_crdt::DeltaError&gt;
+    {
+        match delta {
+            TextSchemaDelta::Content(d) =&gt; ::kyoso_crdt::Crdt::apply(&amp;mut self.content, d, ctx),
+            TextSchemaDelta::Style(d)   =&gt; ::kyoso_crdt::Crdt::apply(&amp;mut self.style,   d, ctx),
+            TextSchemaDelta::Fills(d)   =&gt; ::kyoso_crdt::Crdt::apply(&amp;mut self.fills,   d, ctx),
+        }
+    }
+
+    fn mutate(&amp;mut self, m: Self::Mutation, ctx: &amp;mut ::kyoso_crdt::CausalContext) -&gt; Self::Delta {
+        match m {
+            TextSchemaMut::Content(m) =&gt;
+                TextSchemaDelta::Content(::kyoso_crdt::Crdt::mutate(&amp;mut self.content, m, ctx)),
+            TextSchemaMut::Style(m) =&gt;
+                TextSchemaDelta::Style(::kyoso_crdt::Crdt::mutate(&amp;mut self.style, m, ctx)),
+            TextSchemaMut::Fills(m) =&gt;
+                TextSchemaDelta::Fills(::kyoso_crdt::Crdt::mutate(&amp;mut self.fills, m, ctx)),
+        }
+    }
+}</code></pre>
+
+                    <h3 id="s2e">
+                        <span class="stage">2e</span>
+                        <code>impl SchemaApply</code> — wire-driven, path-string
+                        dispatch (inbound)
+                    </h3>
+                    <pre><code class="language-rust">impl ::kyoso_crdt::SchemaApply for TextSchema {
+    fn apply_wire(&amp;mut self, path: &amp;::kyoso_crdt::Path, delta: ::kyoso_crdt::WireDelta,
+                  ctx: &amp;::kyoso_crdt::CausalContext)
+        -&gt; ::core::result::Result&lt;(), ::kyoso_crdt::DeltaError&gt;
+    {
+        let (head, tail) = ::kyoso_crdt::schema::split_field_head(path)?;
+        match head {
+            "content" =&gt; ::kyoso_crdt::SchemaApply::apply_wire(&amp;mut self.content, &amp;tail, delta, ctx),
+            "style"   =&gt; ::kyoso_crdt::SchemaApply::apply_wire(&amp;mut self.style,   &amp;tail, delta, ctx),
+            "fills"   =&gt; ::kyoso_crdt::SchemaApply::apply_wire(&amp;mut self.fills,   &amp;tail, delta, ctx),
+            other =&gt; Err(::kyoso_crdt::DeltaError::UnknownPath { segment: other.to_string() }),
+        }
+    }
+    fn install_state(&amp;mut self, path: &amp;::kyoso_crdt::Path, field: ::kyoso_crdt::OpaqueValue)
+        -&gt; ::core::result::Result&lt;(), ::kyoso_crdt::DeltaError&gt;
+    { /* same head/tail dispatch, snapshot-hydration path */ }
+}</code></pre>
+                    <p>
+                        <code>apply_wire</code> matches the
+                        <strong>field name string</strong>
+                        (<code>"content"</code>), whereas <code>apply</code> in
+                        <a class="stage" href="#s2d">2d</a> matches the
+                        <strong>typed enum variant</strong>.
+                        <code>SchemaApply</code> is the untyped wire entry
+                        point; <code>Crdt::apply</code> is the typed one. For
+                        leaf CRDTs (<code>Sequence</code>,
+                        <code>LwwRegister</code>) the <code>tail</code> is empty
+                        and they consume the delta directly; for the nested
+                        <code>style</code> field the tail is non-empty and
+                        recursion continues into
+                        <code>TypeStyleSchema::apply_wire</code>.
+                    </p>
+
+                    <h3 id="s2f">
+                        <span class="stage">2f</span>
+                        <code>impl IntoWireOp</code> — delta →
+                        <code>(Path, WireDelta)</code> (outbound)
+                    </h3>
+                    <pre><code class="language-rust">impl ::kyoso_crdt::IntoWireOp for TextSchemaDelta {
+    fn into_wire_op(self) -&gt; (::kyoso_crdt::Path, ::kyoso_crdt::WireDelta) {
+        match self {
+            TextSchemaDelta::Content(d) =&gt; {
+                let (inner, wire) = ::kyoso_crdt::IntoWireOp::into_wire_op(d);
+                let mut path = ::kyoso_crdt::Path::field("content");   // prepend our field name
+                for seg in inner.0 { path.0.push(seg); }                // recurse for nested
+                (path, wire)
+            }
+            TextSchemaDelta::Style(d) =&gt; { /* same shape, prepends "style" */ }
+            TextSchemaDelta::Fills(d) =&gt; { /* same shape, prepends "fills" */ }
+        }
+    }
+}</code></pre>
+                    <p>
+                        For a leaf like
+                        <code>LwwRegister&lt;Vec&lt;Paint&gt;&gt;</code> or
+                        <code>Sequence&lt;char&gt;</code>, <code>inner</code> is
+                        empty so the path is just <code>["fills"]</code> /
+                        <code>["content"]</code>. For the nested
+                        <code>style</code> field, the inner path is itself
+                        non-empty (e.g. <code>["font_size"]</code>) so the final
+                        path is <code>["style", "font_size"]</code> —
+                        multi-segment.
+                    </p>
+                </section>
+
+                <section id="annotations">
+                    <h2>
+                        Picking the wrapper: how
+                        <code>#[crdt(...)]</code> annotations map
+                    </h2>
+                    <p>
+                        Only <a class="stage" href="#s1a">1a</a> (the wrapper
+                        type) changes per annotation — everything downstream is
+                        uniform because it all goes through
+                        <code>SchemaField</code> / <code>Crdt</code>.
+                    </p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>
+                                    <code>#[crdt(...)]</code> on field
+                                    <code>T</code>
+                                </th>
+                                <th>Stage 1a wrapper</th>
+                                <th>Stage 2 <code>::Mutation</code></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><em>(none)</em> / <code>lww</code></td>
+                                <td><code>LwwRegister&lt;T&gt;</code></td>
+                                <td><code>LwwMut&lt;T&gt;</code></td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <code>or_set</code> (T =
+                                    Vec/HashSet/BTreeSet of U)
+                                </td>
+                                <td><code>OrSet&lt;U&gt;</code></td>
+                                <td><code>OrSetMut&lt;U&gt;</code></td>
+                            </tr>
+                            <tr>
+                                <td><code>counter</code> (T = integer)</td>
+                                <td><code>PnCounter</code></td>
+                                <td><code>PnMut</code></td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <code>map</code> (T =
+                                    <code>HashMap&lt;String, V&gt;</code>)
+                                </td>
+                                <td>
+                                    <code
+                                        >CausalMap&lt;LwwRegister&lt;V&gt;&gt;</code
+                                    >
+                                </td>
+                                <td>
+                                    <code>MapMut&lt;LwwMut&lt;V&gt;&gt;</code>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <code>sequence</code> (T = String /
+                                    Vec&lt;U&gt;)
+                                </td>
+                                <td>
+                                    <code>Sequence&lt;char&gt;</code> /
+                                    <code>Sequence&lt;U&gt;</code>
+                                </td>
+                                <td><code>SequenceMut&lt;…&gt;</code></td>
+                            </tr>
+                            <tr>
+                                <td><code>nested</code> (T: SchemaSync)</td>
+                                <td>
+                                    <code>&lt;T as SchemaSync&gt;::Schema</code>
+                                </td>
+                                <td>that schema's <code>…SchemaMut</code></td>
+                            </tr>
+                            <tr>
+                                <td><code>with = "Type"</code></td>
+                                <td>
+                                    <code>Type</code> (hand-written
+                                    <code>SchemaField</code> impl)
+                                </td>
+                                <td>
+                                    <code>&lt;Type as Crdt&gt;::Mutation</code>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>skip</code></td>
+                                <td colspan="2">
+                                    <em>field omitted entirely</em>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p>Worked through <code>Text</code> field-by-field:</p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Field</th>
+                                <th>Attribute</th>
+                                <th>Wrapper</th>
+                                <th>Mutation</th>
+                                <th>Convergence</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>content</code></td>
+                                <td><code>#[crdt(sequence)]</code></td>
+                                <td><code>Sequence&lt;char&gt;</code></td>
+                                <td><code>SequenceMut&lt;char&gt;</code></td>
+                                <td>
+                                    RGA — concurrent inserts interleave
+                                    deterministically
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>style</code></td>
+                                <td><code>#[crdt(nested)]</code></td>
+                                <td><code>TypeStyleSchema</code></td>
+                                <td><code>TypeStyleSchemaMut</code></td>
+                                <td>per-field merge of the inner struct</td>
+                            </tr>
+                            <tr>
+                                <td><code>fills</code></td>
+                                <td><em>(none)</em></td>
+                                <td>
+                                    <code
+                                        >LwwRegister&lt;Vec&lt;Paint&gt;&gt;</code
+                                    >
+                                </td>
+                                <td>
+                                    <code>LwwMut&lt;Vec&lt;Paint&gt;&gt;</code>
+                                </td>
+                                <td>whole-list LWW</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p>
+                        <code>nested</code> is the interesting case because it
+                        bottoms out at another <code>SchemaSync</code> derive —
+                        which means the wrapper type, the mutation type,
+                        <em>and</em> the recursive wire-path stitching all just
+                        fall out of the same machinery. There is no special code
+                        path for nesting; it composes.
+                    </p>
+                </section>
+
+                <section id="runtime">
+                    <h2>
+                        The runtime — <code>SchemaSyncedComponentPlugin</code>
+                    </h2>
+                    <p>
+                        Macro output gives you the types and the per-field
+                        bridges. The plugin gives them a runtime: it owns the
+                        replicated state, schedules the systems that drive the
+                        cycle, and abstracts over the CRDT model via a trait
+                        seam.
+                    </p>
+                    <p>
+                        <code>crates/kyoso_sync/src/component_sync.rs:496</code
+                        >. Generic over two type params:
+                    </p>
+                    <ul>
+                        <li>
+                            <code>C: SchemaSync</code> — the component to sync
+                            (e.g. <code>Text</code>).
+                        </li>
+                        <li>
+                            <code>X: SchemaTarget</code> — the
+                            <strong>model seam</strong>. Today:
+                            <code>NodeTarget</code> or
+                            <code>EdgeTarget</code> from
+                            <code>kyoso_graph_sync</code>.
+                        </li>
+                    </ul>
+                    <p><code>Plugin::build</code>:</p>
+                    <pre><code class="language-rust">fn build(&amp;self, app: &amp;mut App) {
+    app.init_resource::&lt;SchemaDoc&lt;C::Schema&gt;&gt;();
+    app.init_resource::&lt;SchemaHydrators&gt;();
+    app.world_mut()
+        .resource_mut::&lt;SchemaHydrators&gt;()
+        .register::&lt;X, C&gt;();
+    app.add_systems(
+        Update,
+        (
+            ensure_schema_slots::&lt;X, C&gt;,
+            detect_local_changes::&lt;X, C&gt;,
+            apply_remote_changes::&lt;X, C&gt;,
+            project_to_components::&lt;X, C&gt;,
+        )
+            .chain()
+            .after(SyncSet::Structural)
+            .before(SyncSet::Outbound),
+    );
+}</code></pre>
+                    <p>
+                        Two resources, four systems, one chain, one ordering
+                        constraint.
+                    </p>
+
+                    <h3>What it owns</h3>
+                    <ul>
+                        <li>
+                            <strong
+                                ><code>SchemaDoc&lt;C::Schema&gt;</code></strong
+                            >
+                            (<code>component_sync.rs:138</code>) — a
+                            <code>HashMap&lt;CrdtId, C::Schema&gt;</code> plus a
+                            <code>CausalState</code>. Per-id replicated schema
+                            state. Only mutated by server-confirmed property ops
+                            (via <code>apply_property</code> at
+                            <code>component_sync.rs:183</code>); never
+                            pre-applied from local edits.
+                        </li>
+                        <li>
+                            <strong><code>SchemaHydrators</code></strong>
+                            (<code>component_sync.rs:211</code>) — a
+                            <code>(TargetKind, schema_name) → HydratorFn</code>
+                            registry for snapshot install. Each
+                            <code>SchemaSyncedComponentPlugin&lt;X, C&gt;</code>
+                            registers one entry at app build.
+                        </li>
+                    </ul>
+
+                    <h3>Scheduling</h3>
+                    <div class="pipeline">
+                        <span class="phase">SyncSet::Structural</span>
+                        <span class="muted"
+                            >← model populates X::Index (Entity ↔ CrdtId)</span
+                        >
+                        <span class="down">│</span>
+                        <span class="down">▼</span>
+                        <span class="sys">ensure_schema_slots</span>
+                        <span class="muted"
+                            >── default SchemaDoc slot per bound entity</span
+                        >
+                        <span class="sys">detect_local_changes</span>
+                        <span class="muted"
+                            >── outbound: Changed&lt;C&gt; → diff → wire
+                            ops</span
+                        >
+                        <span class="sys">apply_remote_changes</span>
+                        <span class="muted"
+                            >── inbound: X::Inbound message → SchemaDoc</span
+                        >
+                        <span class="sys">project_to_components</span>
+                        <span class="muted"
+                            >── writeback: SchemaDoc → Bevy Mut&lt;C&gt;</span
+                        >
+                        <span class="down">│</span>
+                        <span class="down">▼</span>
+                        <span class="phase">SyncSet::Outbound</span>
+                        <span class="muted"
+                            >← model drains queued ops to the transport</span
+                        >
+                    </div>
+                    <p>
+                        The plugin doesn't name any model-specific systems —
+                        only the two <code>SyncSet</code> phases. That's what
+                        makes it model-agnostic.
+                    </p>
+
+                    <h3>The model seam: <code>SchemaTarget</code></h3>
+                    <pre><code class="language-rust">pub trait SchemaTarget: 'static + Send + Sync {
+    const KIND: TargetKind;
+    type Index: Resource;        // Entity ↔ CrdtId map
+    type Outbound: Resource;     // local op queue
+    type Inbound: Message;       // inbound server-confirmed op
+
+    fn id_for(index: &amp;Self::Index, entity: Entity) -&gt; Option&lt;CrdtId&gt;;
+    fn pairs(index: &amp;Self::Index) -&gt; &amp;HashMap&lt;Entity, CrdtId&gt;;
+    fn mint_id(out: &amp;mut Self::Outbound) -&gt; CrdtId;
+    fn enqueue(out: &amp;mut Self::Outbound, op_id: CrdtId, target: CrdtId,
+               path: Path, delta: WireDelta);
+    fn match_inbound(event: &amp;Self::Inbound) -&gt; Option&lt;InboundProperty&lt;'_&gt;&gt;;
+}</code></pre>
+                    <p>
+                        <code>NodeTarget</code> and <code>EdgeTarget</code> (in
+                        <code>kyoso_graph_sync</code>) bridge the graph model's
+                        <code>NodeId</code>/<code>EdgeId</code>-flavoured op
+                        envelopes to the universal
+                        <code>(CrdtId, Path, WireDelta)</code> triple. A
+                        non-graph model would add a third implementor and reuse
+                        the plugin unchanged.
+                    </p>
+                </section>
+
+                <section id="systems">
+                    <h2>The four systems</h2>
+
+                    <h3><code>ensure_schema_slots</code></h3>
+                    <p>
+                        <code>component_sync.rs:272</code>. For every entity
+                        that has both component <code>C</code> <em>and</em> an
+                        <code>X::Index</code> binding, ensures a default schema
+                        slot exists in <code>SchemaDoc</code>. Uses
+                        <code>doc.bypass_change_detection()</code> — otherwise
+                        the deref-mut would flip <code>is_changed()</code> every
+                        frame and force <code>project_to_components</code> to
+                        redundantly write back to every bound entity, creating a
+                        frame-loop.
+                    </p>
+
+                    <h3>
+                        <code>detect_local_changes</code> — outbound encoder
+                    </h3>
+                    <p>
+                        <code>component_sync.rs:297</code>. Query:
+                        <code
+                            >Query&lt;(Entity, Ref&lt;C&gt;),
+                            Changed&lt;C&gt;&gt;</code
+                        >. For each changed component:
+                    </p>
+                    <pre><code class="language-rust">let mutations = component.diff(current);                // SchemaSync::diff (stage 1b)
+for mutation in mutations {
+    let op_id = X::mint_id(&amp;mut out);
+    let mut ctx = CausalContext::new(op_id, None, &amp;mut state);
+    let typed_delta = throwaway.mutate(mutation, &amp;mut ctx);   // Crdt::mutate (stage 2d)
+    let (inner_path, wire) = typed_delta.into_wire_op();      // IntoWireOp (stage 2f)
+    let mut path = Path::field(C::SCHEMA_NAME);               // prepend "Text"
+    for seg in inner_path.0 { path.0.push(seg); }
+    X::enqueue(&amp;mut out, op_id, id, path, wire);              // model-side enqueue
+}</code></pre>
+                    <div class="callout">
+                        <strong>Reconnect echo-guard</strong>
+                        (<code>component_sync.rs:318-333</code>): a
+                        snapshot-hydrated entity is <code>is_added()</code> AND
+                        the doc already holds non-default state — those are
+                        skipped. A user-spawned entity is <em>also</em>
+                        <code>is_added()</code>, but the doc is still at lattice
+                        bottom, so its initial values do replicate. Without this
+                        guard, on-add observers that auto-insert default
+                        components would trip a diff that resets every field to
+                        the local default and clobber canonical state on other
+                        peers.
+                    </div>
+                    <p>
+                        The <code>throwaway</code> clone is so the local
+                        <code>mutate</code> walks the CRDT state forward to
+                        produce the wire delta without committing to the live
+                        <code>SchemaDoc</code> — that update happens only on the
+                        server echo.
+                    </p>
+
+                    <h3><code>apply_remote_changes</code> — inbound router</h3>
+                    <p>
+                        <code>component_sync.rs:361</code>. Filters the inbound
+                        stream:
+                    </p>
+                    <pre><code class="language-rust">for event in events.read() {
+    let Some(prop) = X::match_inbound(event) else { continue };
+    let Some(PathSegment::Field(head)) = prop.path.0.first() else { continue };
+    if head != C::SCHEMA_NAME { continue }                  // skip other components
+    let inner_path = Path(prop.path.0[1..].to_vec());        // strip schema name
+    doc.apply_property(prop.op_id, prop.seq, prop.target,
+                       &amp;inner_path, prop.delta.clone())?;
+}</code></pre>
+                    <p>
+                        <code>SchemaDoc::apply_property</code>
+                        (<code>component_sync.rs:183</code>) wraps the call in a
+                        <code>CausalContext</code> and dispatches to the
+                        generated <code>SchemaApply::apply_wire</code> (<a
+                            class="stage"
+                            href="#s2e"
+                            >2e</a
+                        >), which walks the path head-by-head until it lands on
+                        a leaf CRDT and applies the typed delta.
+                    </p>
+
+                    <h3><code>project_to_components</code> — writeback</h3>
+                    <p>
+                        <code>component_sync.rs:402</code>. Bails fast when
+                        <code>doc.is_changed() == false</code>. Otherwise
+                        iterates <code>X::pairs()</code> and calls
+                        <code>component.write_back(schema)</code> (<a
+                            class="stage"
+                            href="#s1b"
+                            >1b</a
+                        >
+                        <code>SchemaSync::write_back</code>) per entity. If the
+                        component doesn't exist on the entity yet — typical of
+                        snapshot hydration — falls back to queueing an
+                        <code>InsertSchemaProjected</code> command that inserts
+                        <code>C::default()</code> and then writes back.
+                    </p>
+                </section>
+
+                <section id="trace">
+                    <h2>
+                        End-to-end: editing <code>text.content</code> on peer A
+                        → peer B
+                    </h2>
+                    <p>
+                        Tracing one local character insert all the way through
+                        both halves of the pipeline.
+                    </p>
+                    <div class="trace">
+                        <div class="col-header a">Peer A</div>
+                        <div class="col-header b">Peer B</div>
+
+                        <div class="step a">
+                            <span class="step-num">1.</span
+                            ><span class="step-body"
+                                ><code>text.content.push('!')</code><br /><span
+                                    class="muted"
+                                    >— some Bevy system mutates the
+                                    component</span
+                                ></span
+                            >
+                        </div>
+                        <div class="step b empty"></div>
+
+                        <div class="step a">
+                            <span class="step-num">2.</span
+                            ><span class="step-body"
+                                ><strong>detect_local_changes</strong>
+                                (<code>component_sync.rs:297</code>):<br />
+                                <code>Text::diff(&amp;doc.schema)</code>
+                                returns<br />
+                                <code
+                                    >vec![
+                                    TextSchemaMut::Content(SequenceMut::Insert{..})
+                                    ]</code
+                                ><br />
+                                <span class="muted"
+                                    >via SchemaField&lt;String&gt; for
+                                    Sequence&lt;char&gt;
+                                    (<code>schema.rs:237</code>)</span
+                                ></span
+                            >
+                        </div>
+                        <div class="step b empty"></div>
+
+                        <div class="step a">
+                            <span class="step-num">3.</span
+                            ><span class="step-body"
+                                ><code
+                                    >TextSchema::mutate(mut, &amp;mut ctx)</code
+                                >
+                                <a class="stage" href="#s2d">2d</a><br />
+                                → <code>TextSchemaDelta::Content(...)</code>
+                                <a class="stage" href="#s2b">2b</a></span
+                            >
+                        </div>
+                        <div class="step b empty"></div>
+
+                        <div class="step a">
+                            <span class="step-num">4.</span
+                            ><span class="step-body"
+                                ><code>.into_wire_op()</code>
+                                <a class="stage" href="#s2f">2f</a><br />
+                                →
+                                <code
+                                    >(Path["content"], WireDelta::SequenceInsert
+                                    { predecessor, value })</code
+                                ><br />
+                                <span class="muted"
+                                    >RGA position lives in
+                                    <code>predecessor</code>, not the path</span
+                                ></span
+                            >
+                        </div>
+                        <div class="step b empty"></div>
+
+                        <div class="step a">
+                            <span class="step-num">5.</span
+                            ><span class="step-body"
+                                >Prepend
+                                <code>SCHEMA_NAME</code>
+                                (<code>component_sync.rs:352</code>):<br />
+                                <code>Path["Text", "content"]</code></span
+                            >
+                        </div>
+                        <div class="step b empty"></div>
+
+                        <div class="step a">
+                            <span class="step-num">6.</span
+                            ><span class="step-body"
+                                ><code
+                                    >NodeTarget::enqueue(out, op_id, id,
+                                    Path["Text","content"], wire)</code
+                                ><br />
+                                → pushed onto the graph model's outbound
+                                queue</span
+                            >
+                        </div>
+                        <div class="step b empty"></div>
+
+                        <div class="step a">
+                            <span class="step-num">7.</span
+                            ><span class="step-body"
+                                ><code>SyncSet::Outbound</code> drains:<br />
+                                queue →
+                                <code
+                                    >Op&lt;OpKind::SetNodeProperty{..}&gt;</code
+                                ><br />
+                                →
+                                <code
+                                    >EnvelopeClientMsg::Submit { model, payload
+                                    }</code
+                                ><br />
+                                <span class="muted"
+                                    >postcard-encoded by WsClient</span
+                                ></span
+                            >
+                        </div>
+                        <div class="step b empty"></div>
+
+                        <div class="step wire">8. ─── WebSocket frame ───►</div>
+
+                        <div class="step a empty"></div>
+                        <div class="step b">
+                            <span class="step-num">9.</span
+                            ><span class="step-body"
+                                ><strong>SyncTransportPlugin</strong>
+                                (PreUpdate) drains the WsClient channel, emits
+                                <code>WsInbound</code> event</span
+                            >
+                        </div>
+
+                        <div class="step a empty"></div>
+                        <div class="step b">
+                            <span class="step-num">10.</span
+                            ><span class="step-body"
+                                ><strong>GraphSyncPlugin</strong> matches the
+                                model id, decodes <code>Op&lt;OpKind&gt;</code>,
+                                re-emits <code>NodeTarget::Inbound</code></span
+                            >
+                        </div>
+
+                        <div class="step a empty"></div>
+                        <div class="step b">
+                            <span class="step-num">11.</span
+                            ><span class="step-body"
+                                ><strong>apply_remote_changes</strong>
+                                (<code>component_sync.rs:361</code>):<br />
+                                <code>match_inbound</code> →
+                                <code>InboundProperty</code><br />
+                                head == <code>"Text"</code> → strip<br />
+                                <code>SchemaDoc::apply_property</code><br />
+                                → <code>SchemaApply::apply_wire</code>
+                                <a class="stage" href="#s2e">2e</a>:<br />
+                                &nbsp;&nbsp;match <code>"content"</code> →
+                                <code
+                                    >self.content.apply_wire(&amp;[], delta,
+                                    ctx)</code
+                                ><br />
+                                &nbsp;&nbsp;→ <code>Sequence::apply</code><br />
+                                → <code>text_schema.content</code> updated</span
+                            >
+                        </div>
+
+                        <div class="step a empty"></div>
+                        <div class="step b">
+                            <span class="step-num">12.</span
+                            ><span class="step-body"
+                                ><strong>project_to_components</strong>
+                                (<code>component_sync.rs:402</code>):<br />
+                                <code>doc.is_changed() == true</code><br />
+                                for <code>(entity, id)</code> in
+                                <code>pairs</code>:<br />
+                                &nbsp;&nbsp;<code
+                                    >Text::write_back(&amp;schema)</code
+                                >
+                                <a class="stage" href="#s1b">1b</a><br />
+                                &nbsp;&nbsp;→
+                                <code
+                                    >component.content =
+                                    schema.content.iter().collect::&lt;String&gt;()</code
+                                ></span
+                            >
+                        </div>
+                    </div>
+
+                    <p>
+                        For the <code>#[crdt(nested)]</code>
+                        <code>style.font_size</code> case only steps 2-5 differ:
+                        <code>Text::diff</code> recurses through
+                        <code
+                            >SchemaField&lt;TypeStyle&gt; for
+                            TypeStyleSchema</code
+                        >
+                        (<a class="stage" href="#s1c">1c</a>) and yields
+                        <code
+                            >TextSchemaMut::Style(TypeStyleSchemaMut::FontSize(LwwMut::Set(...)))</code
+                        >; <code>into_wire_op</code> recursively prepends two
+                        path segments; step 5 prepends <code>"Text"</code>; the
+                        final path is
+                        <code>Path["Text", "style", "font_size"]</code>.
+                        <a class="stage" href="#s2e">2e</a> dispatch on peer B
+                        walks two heads instead of one. Everything else —
+                        transport, scheduling, writeback — is identical.
+                    </p>
+                    <p>
+                        For the implicit-LWW <code>fills</code> case the path is
+                        just <code>Path["Text", "fills"]</code> and the wire
+                        delta is <code>WireDelta::LwwReplace { value }</code>.
+                        Same shape, same systems.
+                    </p>
+                </section>
+
+                <section id="snapshot">
+                    <h2>Snapshot / hydration</h2>
+                    <p>
+                        <code>detect_local_changes</code> and
+                        <code>apply_remote_changes</code> handle the
+                        <em>steady-state</em> delta cycle. When a peer first
+                        joins a room, the server replays current state as
+                        snapshots — one <code>OpaqueValue</code> per primitive
+                        CRDT slot
+                        (<code>crates/kyoso_crdt/src/opaque.rs:60</code>). The
+                        graph crate's snapshot handler clones the
+                        <code>SchemaHydrators</code> table
+                        (<code>component_sync.rs:236</code>) and, for each
+                        snapshot field, looks up the hydrator by
+                        <code>(TargetKind, schema_name)</code> and calls it with
+                        <code>&amp;mut World</code>. The hydrator (<code
+                            >hydrate_schema_doc</code
+                        >
+                        at <code>component_sync.rs:253</code>) resolves
+                        <code>SchemaDoc&lt;C::Schema&gt;</code>, ensures the
+                        slot for <code>target</code>, and calls
+                        <code>SchemaApply::install_state</code> — the snapshot
+                        variant of <a class="stage" href="#s2e">2e</a>. The very
+                        next frame's <code>project_to_components</code> writes
+                        those hydrated values onto Bevy components.
+                    </p>
+                    <p>
+                        The <code>Welcome</code> path (for joiners arriving
+                        fresh enough to be served deltas rather than a full
+                        snapshot) is just
+                        <code>apply_remote_changes</code> again — the server
+                        ships the recent op tail and the live delta cycle
+                        handles it. The integration test
+                        <code>derived_schema_replicates_all_fields</code>
+                        (<code>crates/kyoso_graph_sync/tests/derived_schema.rs:113</code>)
+                        is the canonical end-to-end exercise.
+                    </p>
+                </section>
+
+                <section id="assembly">
+                    <h2>Plugin assembly in a host app</h2>
+                    <p><code>crates/kyoso_circuit/src/plugin.rs:28</code>:</p>
+                    <pre><code class="language-rust">impl Plugin for KyosoCircuitPlugin {
+    fn build(&amp;self, app: &amp;mut App) {
+        app.add_plugins((
+            SyncTransportPlugin::new(self.server_url.clone(), self.room.clone()),
+            GraphSyncPlugin::default(),
+            SchemaSyncedComponentPlugin::&lt;NodeTarget, Resistor&gt;::default(),
+            SchemaSyncedComponentPlugin::&lt;NodeTarget, Capacitor&gt;::default(),
+            SchemaSyncedComponentPlugin::&lt;NodeTarget, Inductor&gt;::default(),
+            SchemaSyncedComponentPlugin::&lt;NodeTarget, VoltageSource&gt;::default(),
+            SchemaSyncedComponentPlugin::&lt;NodeTarget, Ground&gt;::default(),
+        ));
+        app.add_plugins((
+            SchemaSyncedComponentPlugin::&lt;NodeTarget, Transform&gt;::default(),
+            SchemaSyncedComponentPlugin::&lt;NodeTarget, OnLayer&gt;::default(),
+        ));
+    }
+}</code></pre>
+                    <p>
+                        One
+                        <code
+                            >SchemaSyncedComponentPlugin&lt;NodeTarget,
+                            C&gt;</code
+                        >
+                        per component type. The plugin re-export comes through
+                        <code>kyoso_graph_sync</code> for convenience, but the
+                        type itself is defined in <code>kyoso_sync</code>. To
+                        sync a field of an edge-attached component instead, swap
+                        <code>NodeTarget</code> for <code>EdgeTarget</code>. To
+                        sync against a non-graph model, supply a third
+                        <code>SchemaTarget</code> impl — the plugin code itself
+                        doesn't change.
+                    </p>
+                </section>
+
+                <section id="responsibilities">
+                    <h2>Responsibility split</h2>
+                    <table class="responsibilities">
+                        <thead>
+                            <tr>
+                                <th>Layer</th>
+                                <th>Owns</th>
+                                <th>Lives in</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>SchemaSync derive</td>
+                                <td>
+                                    Bevy-component ⇄ schema-struct bridge
+                                    (<code>diff</code>/<code>write_back</code>),
+                                    the
+                                    <code>SchemaField&lt;Comp&gt;</code> nesting
+                                    hook,
+                                    <strong
+                                        >and emitting the
+                                        <code>DeriveCrdt</code>
+                                        attribute</strong
+                                    >
+                                </td>
+                                <td><code>kyoso_sync_derive</code></td>
+                            </tr>
+                            <tr>
+                                <td>DeriveCrdt derive</td>
+                                <td>
+                                    Pure CRDT machinery on the schema struct:
+                                    <code>Mut</code>/<code>Delta</code> enums,
+                                    <code>Lattice</code>, <code>Crdt</code>,
+                                    <code>SchemaApply</code>,
+                                    <code>IntoWireOp</code>
+                                </td>
+                                <td><code>kyoso_crdt_derive</code></td>
+                            </tr>
+                            <tr>
+                                <td>SchemaField&lt;T&gt; impls</td>
+                                <td>
+                                    Per-CRDT-primitive diff/projection (incl.
+                                    the LWW echo-guard)
+                                </td>
+                                <td>
+                                    <code>kyoso_sync</code>
+                                    (<code>schema.rs</code>)
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>SchemaSyncedComponentPlugin</td>
+                                <td>
+                                    Per-(target, component) runtime pipeline + 4
+                                    systems + <code>SchemaDoc</code> +
+                                    <code>SchemaHydrators</code>
+                                </td>
+                                <td>
+                                    <code>kyoso_sync</code>
+                                    (<code>component_sync.rs</code>)
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>SchemaTarget (model seam)</td>
+                                <td>
+                                    Binds the pipeline to a model: identity,
+                                    outbound queue, inbound stream
+                                </td>
+                                <td>
+                                    <code>kyoso_graph_sync</code>
+                                    (NodeTarget/EdgeTarget) and future model
+                                    crates
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>SyncTransportPlugin / WsClient</td>
+                                <td>Postcard-encoded ops over WebSocket</td>
+                                <td>
+                                    <code>kyoso_sync</code>
+                                    (<code>transport.rs</code>,
+                                    <code>client.rs</code>)
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p>
+                        <code>SchemaSync</code> knows nothing about lattices or
+                        wire format; <code>DeriveCrdt</code> knows nothing about
+                        Bevy; <code>SchemaSyncedComponentPlugin</code> knows
+                        nothing about graphs; <code>SchemaTarget</code> knows
+                        nothing about CRDTs. The generated
+                        <code>TextSchema</code> struct is the only thing every
+                        layer touches.
+                    </p>
+                </section>
+            </main>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+        <script>
+            function applyTheme(t) {
+                document.documentElement.setAttribute("data-theme", t);
+                document.getElementById("hl-light").disabled = t === "dark";
+                document.getElementById("hl-dark").disabled = t !== "dark";
+                var btn = document.getElementById("themeBtn");
+                if (btn) btn.textContent = t === "dark" ? "☀ Light" : "☾ Dark";
+            }
+            function toggleTheme() {
+                var cur = document.documentElement.getAttribute("data-theme");
+                var next = cur === "dark" ? "light" : "dark";
+                localStorage.setItem("theme", next);
+                applyTheme(next);
+            }
+            applyTheme(
+                document.documentElement.getAttribute("data-theme") || "light",
+            );
+            if (window.hljs) hljs.highlightAll();
+        </script>
+    </body>
+</html>
