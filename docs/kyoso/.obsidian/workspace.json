@@ -6,7 +6,6 @@
       {
         "id": "b5b9da6213596b00",
         "type": "tabs",
-        "dimension": 62.861010830324915,
         "children": [
           {
             "id": "d5d21ebe85ea7e5d",
@@ -49,29 +48,23 @@
               "icon": "lucide-file",
               "title": "event_bus"
             }
-          }
-        ]
-      },
-      {
-        "id": "777b88c1a7cce264",
-        "type": "tabs",
-        "dimension": 37.13898916967509,
-        "children": [
+          },
           {
-            "id": "6a6819305fd4ebac",
+            "id": "2fe0a7e38d7dec2c",
             "type": "leaf",
             "state": {
               "type": "markdown",
               "state": {
-                "file": "system-design/Collaboration from first principles.md",
+                "file": "Untitled.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Collaboration from first principles"
+              "title": "Untitled"
             }
           }
-        ]
+        ],
+        "currentTab": 3
       }
     ],
     "direction": "vertical"
@@ -230,18 +223,19 @@
       "bases:Create new base": false
     }
   },
-  "active": "d5d21ebe85ea7e5d",
+  "active": "2fe0a7e38d7dec2c",
   "lastOpenFiles": [
+    "Untitled.md",
+    "system-design/event_bus.md",
+    "system-design/architecture-evolution.md",
     "system-design/creating-new-crdt-structures.md",
     "system-design/crdt-infrastructure-design.md",
     "system-design/refactoring-plan-unified-backend.md",
     "system-design/backend-vs-document.md",
     "system-design/crdt-overview.md",
-    "system-design/architecture-evolution.md",
     "system-design/Collaboration from first principles.md",
     "system-design/crdt.md",
     "system-design/crdt-overview.md.tmp.56476.47f5af55cfdf",
-    "system-design/event_bus.md",
     "system-design/compute/02_authorization.md",
     "system-design/compute/01_storage.md",
     "system-design/compute/00_overview.md",
