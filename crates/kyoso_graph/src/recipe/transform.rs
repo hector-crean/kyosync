@@ -16,7 +16,7 @@ use petgraph::stable_graph::StableGraph;
 use petgraph::Directed;
 
 use crate::GraphMessage;
-use crate::queries::{GraphComponent, GraphQuery};
+use crate::queries::GraphQuery;
 
 use super::matcher::find_embeddings;
 use super::pattern::Pattern;
@@ -104,14 +104,14 @@ impl RecipeBook {
 /// applies transforms.
 pub fn evaluate_recipes<Node, Edge>(
     mut commands: Commands,
-    q: GraphQuery<'_, '_, Node, Edge>,
+    q: GraphQuery<'_, '_, &Node, &Edge>,
     recipe_book: Option<Res<RecipeBook>>,
     node_symbol_q: Query<&Name, With<Node>>,
     existing_groups: Query<Entity, With<FunctionalGroup>>,
     mut reader: MessageReader<GraphMessage>,
 ) where
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     // Only re-evaluate when topology changes.
     let mut changed = false;
@@ -214,16 +214,16 @@ pub fn evaluate_recipes<Node, Edge>(
 
 pub struct RecipePlugin<Node, Edge>
 where
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     _phantom: std::marker::PhantomData<(Node, Edge)>,
 }
 
 impl<Node, Edge> Default for RecipePlugin<Node, Edge>
 where
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     fn default() -> Self {
         Self {
@@ -234,8 +234,8 @@ where
 
 impl<Node, Edge> Plugin for RecipePlugin<Node, Edge>
 where
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     fn build(&self, app: &mut App) {
         app.register_type::<FunctionalGroup>()

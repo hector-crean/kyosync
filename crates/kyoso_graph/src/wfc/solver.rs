@@ -28,7 +28,7 @@ use crate::wfc::heuristic::{MinEntropyHeuristic, WfcHeuristic};
 use crate::wfc::propagator::propagate_ac3;
 use crate::{
     GraphMessage,
-    queries::{GraphComponent, GraphQuery},
+    queries::GraphQuery,
 };
 
 // ---------------------------------------------------------------------------
@@ -248,11 +248,11 @@ pub fn wfc_gather<C: Catalog>(
 /// [`WfcSolverState::suggestions_for`] with a specific [`AnchorContext`].
 pub fn wfc_solve<C, Node, Edge>(
     mut solver: ResMut<WfcSolverState<C>>,
-    q: GraphQuery<'_, '_, Node, Edge>,
+    q: GraphQuery<'_, '_, &Node, &Edge>,
 ) where
     C: Catalog,
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     if !solver.needs_solve() {
         return;
@@ -390,8 +390,8 @@ pub fn wfc_scatter<C: Catalog>(
 pub struct WfcPlugin<C, Node, Edge>
 where
     C: Catalog,
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     _phantom: std::marker::PhantomData<(C, Node, Edge)>,
 }
@@ -399,8 +399,8 @@ where
 impl<C, Node, Edge> Default for WfcPlugin<C, Node, Edge>
 where
     C: Catalog,
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     fn default() -> Self {
         Self {
@@ -412,8 +412,8 @@ where
 impl<C, Node, Edge> Plugin for WfcPlugin<C, Node, Edge>
 where
     C: Catalog,
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     fn build(&self, app: &mut App) {
         app.add_systems(

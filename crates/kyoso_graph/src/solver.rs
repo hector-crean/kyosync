@@ -87,7 +87,6 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use super::components::{EdgeFrom, EdgeTo};
-use super::queries::GraphComponent;
 use super::GraphSystemSet;
 
 // ============================================================================
@@ -480,7 +479,7 @@ fn unregister_solver_edge(
 // ECS Sync Systems
 // ============================================================================
 
-fn sync_solver_nodes_added<Node: GraphComponent>(
+fn sync_solver_nodes_added<Node: Component>(
     mut graph: ResMut<SolverGraph>,
     mut index: ResMut<SolverEntityIndex>,
     added: Query<Entity, Added<Node>>,
@@ -490,7 +489,7 @@ fn sync_solver_nodes_added<Node: GraphComponent>(
     }
 }
 
-fn sync_solver_nodes_removed<Node: GraphComponent>(
+fn sync_solver_nodes_removed<Node: Component>(
     mut graph: ResMut<SolverGraph>,
     mut index: ResMut<SolverEntityIndex>,
     mut removed: RemovedComponents<Node>,
@@ -500,7 +499,7 @@ fn sync_solver_nodes_removed<Node: GraphComponent>(
     }
 }
 
-fn sync_solver_edges_added<Edge: GraphComponent>(
+fn sync_solver_edges_added<Edge: Component>(
     mut graph: ResMut<SolverGraph>,
     mut index: ResMut<SolverEntityIndex>,
     added: Query<(Entity, &EdgeFrom, &EdgeTo), Added<Edge>>,
@@ -510,7 +509,7 @@ fn sync_solver_edges_added<Edge: GraphComponent>(
     }
 }
 
-fn sync_solver_edges_removed<Edge: GraphComponent>(
+fn sync_solver_edges_removed<Edge: Component>(
     mut graph: ResMut<SolverGraph>,
     mut index: ResMut<SolverEntityIndex>,
     mut removed: RemovedComponents<Edge>,
@@ -520,7 +519,7 @@ fn sync_solver_edges_removed<Edge: GraphComponent>(
     }
 }
 
-fn sync_solver_edges_changed<Edge: GraphComponent>(
+fn sync_solver_edges_changed<Edge: Component>(
     mut graph: ResMut<SolverGraph>,
     mut index: ResMut<SolverEntityIndex>,
     changed: Query<
@@ -550,16 +549,16 @@ fn sync_solver_edges_changed<Edge: GraphComponent>(
 /// ```
 pub struct GraphSolverPlugin<Node, Edge>
 where
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     _phantom: PhantomData<(Node, Edge)>,
 }
 
 impl<Node, Edge> GraphSolverPlugin<Node, Edge>
 where
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     pub fn new() -> Self {
         Self {
@@ -570,8 +569,8 @@ where
 
 impl<Node, Edge> Default for GraphSolverPlugin<Node, Edge>
 where
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     fn default() -> Self {
         Self::new()
@@ -580,8 +579,8 @@ where
 
 impl<Node, Edge> Plugin for GraphSolverPlugin<Node, Edge>
 where
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     fn build(&self, app: &mut App) {
         app.init_resource::<SolverConfig>()

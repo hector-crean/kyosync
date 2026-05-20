@@ -25,7 +25,6 @@ use std::marker::PhantomData;
 use bevy::prelude::*;
 use kyoso_crdt::{Op, PeerId};
 use kyoso_graph::components::{EdgeFrom, EdgeTo, IncomingEdges};
-use kyoso_graph::queries::GraphComponent;
 use kyoso_graph::tree::{OrderKey, TreeEdge, TreeParent};
 use kyoso_graph_crdt::{OpKind, Snapshot, graph_model};
 use kyoso_sync::{ModelRegistry, PeerIdGen, SyncStatus, WsBridge, WsInbound};
@@ -39,14 +38,14 @@ type GraphOp = Op<OpKind>;
 /// Trait alias for components that can be replicated as graph nodes /
 /// edges. The bound is intentionally minimal: the typed-schema property
 /// pipeline does its own per-field CRDT plumbing, so `Syncable` here
-/// only needs the `GraphComponent + Clone + Debug` shape that the
+/// only needs the `Component + Default + Clone + Debug` shape that the
 /// structural inbound/detection systems rely on.
 pub trait Syncable:
-    GraphComponent<Mutability = bevy::ecs::component::Mutable> + Clone + Debug
+    Component<Mutability = bevy::ecs::component::Mutable> + Default + Clone + Debug
 {
 }
 impl<T> Syncable for T where
-    T: GraphComponent<Mutability = bevy::ecs::component::Mutable> + Clone + Debug
+    T: Component<Mutability = bevy::ecs::component::Mutable> + Default + Clone + Debug
 {
 }
 
