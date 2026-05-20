@@ -231,20 +231,20 @@ pub enum GraphSystemSet {
 /// - Synchronization with a petgraph representation
 ///
 /// # Type Parameters
-/// - `Node`: The component type for graph nodes (must implement `GraphComponent`)
-/// - `Edge`: The component type for graph edges (must implement `GraphComponent`)
+/// - `Node`: The component type for graph nodes (must implement `Component`)
+/// - `Edge`: The component type for graph edges (must implement `Component`)
 pub struct GraphManagerPlugin<Node, Edge>
 where
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     _phantom: PhantomData<(Node, Edge)>,
 }
 
 impl<Node, Edge> GraphManagerPlugin<Node, Edge>
 where
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     pub fn new() -> Self {
         Self {
@@ -255,8 +255,8 @@ where
 
 impl<Node, Edge> Default for GraphManagerPlugin<Node, Edge>
 where
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     fn default() -> Self {
         Self::new()
@@ -265,8 +265,8 @@ where
 
 impl<Node, Edge> Plugin for GraphManagerPlugin<Node, Edge>
 where
-    Node: GraphComponent + Debug,
-    Edge: GraphComponent + Debug,
+    Node: Component + Debug,
+    Edge: Component + Debug,
 {
     fn build(&self, app: &mut App) {
         app.register_type::<GraphMessage>()
@@ -326,10 +326,10 @@ where
 // Command Application System
 // ============================================================================
 
-fn consume_graph_commands<Node: GraphComponent + Debug, Edge: GraphComponent + Debug>(
+fn consume_graph_commands<Node: Component + Debug, Edge: Component + Debug>(
     mut commands: Commands,
     mut reader: MessageReader<GraphCommand>,
-    graph_query: GraphQuery<'_, '_, Node, Edge>,
+    graph_query: GraphQuery<'_, '_, &Node, &Edge>,
     pending: Option<ResMut<PendingTransaction>>,
 ) {
     let mut pending = pending;
@@ -385,8 +385,8 @@ fn consume_graph_commands<Node: GraphComponent + Debug, Edge: GraphComponent + D
 // Change Detection Systems
 // ============================================================================
 
-fn detect_node_changes<Node: GraphComponent, Edge: GraphComponent>(
-    graph_query: GraphQuery<'_, '_, Node, Edge>,
+fn detect_node_changes<Node: Component, Edge: Component>(
+    graph_query: GraphQuery<'_, '_, &Node, &Edge>,
     mut graph_messages: MessageWriter<GraphMessage>,
     added_nodes: Query<NodeQueryData<Node>, Added<Node>>,
     mut removed_nodes: RemovedComponents<Node>,
@@ -408,7 +408,7 @@ fn detect_node_changes<Node: GraphComponent, Edge: GraphComponent>(
     }
 }
 
-fn detect_edge_changes<Edge: GraphComponent>(
+fn detect_edge_changes<Edge: Component>(
     mut graph_messages: MessageWriter<GraphMessage>,
     added_edges: Query<EdgeQueryData<Edge>, Added<Edge>>,
     mut removed_edges: RemovedComponents<Edge>,
@@ -493,9 +493,9 @@ struct PropagationBuffer {
     events: Vec<GraphMessage>,
 }
 
-fn read_propagation_messages<Node: GraphComponent, Edge: GraphComponent>(
+fn read_propagation_messages<Node: Component, Edge: Component>(
     config: Res<GraphEventPropagationConfig>,
-    graph_query: GraphQuery<'_, '_, Node, Edge>,
+    graph_query: GraphQuery<'_, '_, &Node, &Edge>,
     mut reader: MessageReader<GraphMessage>,
     mut buffer: ResMut<PropagationBuffer>,
 ) {

@@ -11,10 +11,8 @@ bevy = { workspace = true }
 kyoso_graph_crdt = { workspace = true }
 petgraph = { workspace = true }
 serde = { workspace = true }
-
-[dev-dependencies]
-kyoso_crdt = { workspace = true }
-proptest = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
 
 [lints]
 workspace = true

@@ -6,7 +6,7 @@
 //! - Graph algorithms (BFS, DFS, connected components, etc.)
 
 use bevy::{
-    ecs::{query::QueryData, system::SystemParam},
+    ecs::{query::{QueryData, QueryFilter}, system::SystemParam},
     prelude::*,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -16,25 +16,12 @@ use super::components::{
 };
 
 // ============================================================================
-// TRAIT ALIASES
-// ============================================================================
-
-/// Trait alias for components that can be used in graph queries.
-///
-/// This combines the common trait bounds needed for graph components:
-/// - `Component`: Bevy component marker
-/// - `Default`: Has a default value
-pub trait GraphComponent: Component + Default {}
-
-impl<T: Component + Default> GraphComponent for T {}
-
-// ============================================================================
 // QUERY DATA TYPES
 // ============================================================================
 
 /// Query data for edge entities.
 #[derive(QueryData)]
-pub struct EdgeQueryData<Edge: GraphComponent> {
+pub struct EdgeQueryData<Edge: Component> {
     pub entity: Entity,
     pub edge_from: &'static EdgeFrom,
     pub edge_to: &'static EdgeTo,
@@ -43,7 +30,7 @@ pub struct EdgeQueryData<Edge: GraphComponent> {
 
 /// Query data for node entities.
 #[derive(QueryData)]
-pub struct NodeQueryData<Node: GraphComponent> {
+pub struct NodeQueryData<Node: Component> {
     pub entity: Entity,
     pub node: &'static Node,
     pub incoming_edges: &'static IncomingEdges,
@@ -66,15 +53,27 @@ pub struct NodeDeltaQueryData {
 ///
 /// Provides methods for navigating the graph, finding neighbors,
 /// computing connected components, and other graph algorithms.
+///
+/// Generic parameters:
+/// - `N`: Node query data (e.g., `&MyNode`, `(&Transform, &Size)`)
+/// - `E`: Edge query data (e.g., `&MyEdge`, `&EdgeWeight`)
+/// - `NF`: Node filter (e.g., `With<Selected>`, `Changed<Position>`), defaults to `()`
+/// - `EF`: Edge filter (e.g., `With<Active>`), defaults to `()`
 #[derive(SystemParam)]
-pub struct GraphQuery<'w, 's, Node: GraphComponent, Edge: GraphComponent> {
+pub struct GraphQuery<'w, 's, N, E, NF = (), EF = ()>
+where
+    N: QueryData + 'static,
+    E: QueryData + 'static,
+    NF: QueryFilter + 'static,
+    EF: QueryFilter + 'static,
+{
     pub edges_from: Query<'w, 's, &'static EdgeFrom>,
     pub edges_to: Query<'w, 's, &'static EdgeTo>,
     pub outgoing_index: Query<'w, 's, &'static OutgoingEdges>,
     pub incoming_index: Query<'w, 's, &'static IncomingEdges>,
-    /// All edges (have both EdgeFrom and EdgeTo)
-    pub edges_q: Query<'w, 's, (Entity, &'static EdgeFrom, &'static EdgeTo, &'static Edge)>,
-    /// All nodes (have GraphNode marker)
+    /// All edges matching the edge query + filter
+    pub edges_q: Query<'w, 's, (Entity, &'static EdgeFrom, &'static EdgeTo, E), EF>,
+    /// All nodes matching the node query + filter
     pub nodes_q: Query<
         'w,
         's,
@@ -82,29 +81,32 @@ pub struct GraphQuery<'w, 's, Node: GraphComponent, Edge: GraphComponent> {
             Entity,
             Option<&'static OutgoingEdges>,
             Option<&'static IncomingEdges>,
-            &'static Node,
+            N,
         ),
+        NF,
     >,
 }
 
-impl<'w, 's, Node, Edge> GraphQuery<'w, 's, Node, Edge>
+impl<'w, 's, N, E, NF, EF> GraphQuery<'w, 's, N, E, NF, EF>
 where
-    Node: GraphComponent,
-    Edge: GraphComponent,
+    N: QueryData + 'static,
+    E: QueryData + 'static,
+    NF: QueryFilter + 'static,
+    EF: QueryFilter + 'static,
 {
     // ========================================================================
     // Basic iteration
     // ========================================================================
 
     /// Iterate all edge entities.
-    pub fn edges_iter(&self) -> impl Iterator<Item = (Entity, EdgeFrom, EdgeTo, &Edge)> + '_ {
+    pub fn edges_iter(&self) -> impl Iterator<Item = (Entity, EdgeFrom, EdgeTo, <E::ReadOnly as QueryData>::Item<'_, '_>)> + '_ {
         self.edges_q.iter().map(|(e, from, to, edge)| (e, *from, *to, edge))
     }
 
     /// Iterate all node entities.
     pub fn nodes_iter(
         &self,
-    ) -> impl Iterator<Item = (Entity, Option<&OutgoingEdges>, Option<&IncomingEdges>, &Node)> + '_ {
+    ) -> impl Iterator<Item = (Entity, Option<&OutgoingEdges>, Option<&IncomingEdges>, <N::ReadOnly as QueryData>::Item<'_, '_>)> + '_ {
         self.nodes_q.iter().map(|(e, outgoing, incoming, node)| (e, outgoing, incoming, node))
     }
 
@@ -390,14 +392,63 @@ where
         component.contains(&b)
     }
 
-    /// Iterator over nodes in BFS order.
-    pub fn bfs_iter(&self, start: Entity) -> BfsIter<'_, Node, Edge> {
+    /// Iterator over nodes in BFS order (entities only).
+    pub fn bfs_iter(&self, start: Entity) -> BfsIter<'_, N, E, NF, EF> {
         BfsIter::new(self, start)
     }
 
-    /// Iterator over nodes in DFS order.
-    pub fn dfs_iter(&self, start: Entity) -> DfsIter<'_, Node, Edge> {
+    /// Iterator over nodes in DFS order (entities only).
+    pub fn dfs_iter(&self, start: Entity) -> DfsIter<'_, N, E, NF, EF> {
         DfsIter::new(self, start)
+    }
+
+    /// Iterator over nodes in BFS order with depth and parent tracking.
+    pub fn bfs_iter_with_depth(&self, start: Entity) -> BfsIterWithDepth<'_, N, E, NF, EF> {
+        BfsIterWithDepth::new(self, start)
+    }
+
+    /// Iterator over nodes in DFS order with depth and parent tracking.
+    pub fn dfs_iter_with_depth(&self, start: Entity) -> DfsIterWithDepth<'_, N, E, NF, EF> {
+        DfsIterWithDepth::new(self, start)
+    }
+
+    // ========================================================================
+    // Component extraction
+    // ========================================================================
+
+    /// Get the node component data for an entity, if it matches the query.
+    pub fn get_node(&self, entity: Entity) -> Option<<N::ReadOnly as QueryData>::Item<'_, '_>> {
+        self.nodes_q.get(entity).ok().map(|(_, _, _, node)| node)
+    }
+
+    /// Get the edge component data for an entity, if it matches the query.
+    pub fn get_edge(&self, entity: Entity) -> Option<<E::ReadOnly as QueryData>::Item<'_, '_>> {
+        self.edges_q.get(entity).ok().map(|(_, _, _, edge)| edge)
+    }
+
+    /// Iterate neighbors with their component data.
+    pub fn neighbors_with_data(&self, node: Entity) -> impl Iterator<Item = (Entity, <N::ReadOnly as QueryData>::Item<'_, '_>)> + '_ {
+        self.neighbors(node)
+            .filter_map(|neighbor| {
+                self.get_node(neighbor).map(|data| (neighbor, data))
+            })
+    }
+
+    /// Iterate edges with full data (edge entity, from, to, edge component).
+    pub fn edges_with_data(&self) -> impl Iterator<Item = (Entity, Entity, Entity, <E::ReadOnly as QueryData>::Item<'_, '_>)> + '_ {
+        self.edges_q.iter().map(|(e, from, to, edge)| (e, from.0, to.0, edge))
+    }
+
+    /// Iterate outgoing edges from a node with their data and target nodes.
+    pub fn outgoing_edges_with_data(
+        &self,
+        node: Entity,
+    ) -> impl Iterator<Item = (Entity, Entity, <E::ReadOnly as QueryData>::Item<'_, '_>)> + '_ {
+        self.outgoing_edges(node).filter_map(|edge_entity| {
+            self.edges_q.get(edge_entity).ok().map(|(_, _, to, edge)| {
+                (edge_entity, to.0, edge)
+            })
+        })
     }
 }
 
@@ -405,18 +456,20 @@ where
 // ITERATOR TYPES
 // ============================================================================
 
-pub struct BfsIter<'a, Node: GraphComponent, Edge: GraphComponent> {
-    graph: &'a GraphQuery<'a, 'a, Node, Edge>,
+pub struct BfsIter<'a, N: QueryData + 'static, E: QueryData + 'static, NF: QueryFilter + 'static, EF: QueryFilter + 'static> {
+    graph: &'a GraphQuery<'a, 'a, N, E, NF, EF>,
     queue: VecDeque<Entity>,
     visited: HashSet<Entity>,
 }
 
-impl<'a, Node, Edge> BfsIter<'a, Node, Edge>
+impl<'a, N, E, NF, EF> BfsIter<'a, N, E, NF, EF>
 where
-    Node: GraphComponent,
-    Edge: GraphComponent,
+    N: QueryData + 'static,
+    E: QueryData + 'static,
+    NF: QueryFilter + 'static,
+    EF: QueryFilter + 'static,
 {
-    fn new(graph: &'a GraphQuery<'a, 'a, Node, Edge>, start: Entity) -> Self {
+    fn new(graph: &'a GraphQuery<'a, 'a, N, E, NF, EF>, start: Entity) -> Self {
         let mut queue = VecDeque::new();
         let mut visited = HashSet::new();
         queue.push_back(start);
@@ -429,10 +482,12 @@ where
     }
 }
 
-impl<'a, Node, Edge> Iterator for BfsIter<'a, Node, Edge>
+impl<'a, N, E, NF, EF> Iterator for BfsIter<'a, N, E, NF, EF>
 where
-    Node: GraphComponent,
-    Edge: GraphComponent,
+    N: QueryData + 'static,
+    E: QueryData + 'static,
+    NF: QueryFilter + 'static,
+    EF: QueryFilter + 'static,
 {
     type Item = Entity;
     fn next(&mut self) -> Option<Self::Item> {
@@ -446,18 +501,20 @@ where
     }
 }
 
-pub struct DfsIter<'a, Node: GraphComponent, Edge: GraphComponent> {
-    graph: &'a GraphQuery<'a, 'a, Node, Edge>,
+pub struct DfsIter<'a, N: QueryData + 'static, E: QueryData + 'static, NF: QueryFilter + 'static, EF: QueryFilter + 'static> {
+    graph: &'a GraphQuery<'a, 'a, N, E, NF, EF>,
     stack: Vec<Entity>,
     visited: HashSet<Entity>,
 }
 
-impl<'a, Node, Edge> DfsIter<'a, Node, Edge>
+impl<'a, N, E, NF, EF> DfsIter<'a, N, E, NF, EF>
 where
-    Node: GraphComponent,
-    Edge: GraphComponent,
+    N: QueryData + 'static,
+    E: QueryData + 'static,
+    NF: QueryFilter + 'static,
+    EF: QueryFilter + 'static,
 {
-    fn new(graph: &'a GraphQuery<'a, 'a, Node, Edge>, start: Entity) -> Self {
+    fn new(graph: &'a GraphQuery<'a, 'a, N, E, NF, EF>, start: Entity) -> Self {
         Self {
             graph,
             stack: vec![start],
@@ -466,10 +523,12 @@ where
     }
 }
 
-impl<'a, Node, Edge> Iterator for DfsIter<'a, Node, Edge>
+impl<'a, N, E, NF, EF> Iterator for DfsIter<'a, N, E, NF, EF>
 where
-    Node: GraphComponent,
-    Edge: GraphComponent,
+    N: QueryData + 'static,
+    E: QueryData + 'static,
+    NF: QueryFilter + 'static,
+    EF: QueryFilter + 'static,
 {
     type Item = Entity;
     fn next(&mut self) -> Option<Self::Item> {
@@ -479,6 +538,132 @@ where
                     self.stack.push(neighbor);
                 }
                 return Some(current);
+            }
+        }
+        None
+    }
+}
+
+// ============================================================================
+// TRAVERSAL NODE (with hierarchical metadata)
+// ============================================================================
+
+/// Traversal result that includes hierarchical metadata.
+#[derive(Clone, Debug)]
+pub struct TraversalNode {
+    /// The entity being visited.
+    pub entity: Entity,
+    /// Depth from the start node (0 = start node).
+    pub depth: usize,
+    /// Parent entity in the traversal tree (None for start node).
+    pub parent: Option<Entity>,
+}
+
+// ============================================================================
+// BFS WITH DEPTH ITERATOR
+// ============================================================================
+
+/// BFS iterator that tracks depth and parent for each visited node.
+pub struct BfsIterWithDepth<'a, N: QueryData + 'static, E: QueryData + 'static, NF: QueryFilter + 'static, EF: QueryFilter + 'static> {
+    graph: &'a GraphQuery<'a, 'a, N, E, NF, EF>,
+    queue: VecDeque<(Entity, usize, Option<Entity>)>,
+    visited: HashSet<Entity>,
+}
+
+impl<'a, N, E, NF, EF> BfsIterWithDepth<'a, N, E, NF, EF>
+where
+    N: QueryData + 'static,
+    E: QueryData + 'static,
+    NF: QueryFilter + 'static,
+    EF: QueryFilter + 'static,
+{
+    fn new(graph: &'a GraphQuery<'a, 'a, N, E, NF, EF>, start: Entity) -> Self {
+        let mut queue = VecDeque::new();
+        let mut visited = HashSet::new();
+        queue.push_back((start, 0, None));
+        visited.insert(start);
+        Self {
+            graph,
+            queue,
+            visited,
+        }
+    }
+}
+
+impl<'a, N, E, NF, EF> Iterator for BfsIterWithDepth<'a, N, E, NF, EF>
+where
+    N: QueryData + 'static,
+    E: QueryData + 'static,
+    NF: QueryFilter + 'static,
+    EF: QueryFilter + 'static,
+{
+    type Item = TraversalNode;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (current, depth, parent) = self.queue.pop_front()?;
+
+        for neighbor in self.graph.neighbors(current) {
+            if self.visited.insert(neighbor) {
+                self.queue.push_back((neighbor, depth + 1, Some(current)));
+            }
+        }
+
+        Some(TraversalNode {
+            entity: current,
+            depth,
+            parent,
+        })
+    }
+}
+
+// ============================================================================
+// DFS WITH DEPTH ITERATOR
+// ============================================================================
+
+/// DFS iterator that tracks depth and parent for each visited node.
+pub struct DfsIterWithDepth<'a, N: QueryData + 'static, E: QueryData + 'static, NF: QueryFilter + 'static, EF: QueryFilter + 'static> {
+    graph: &'a GraphQuery<'a, 'a, N, E, NF, EF>,
+    stack: Vec<(Entity, usize, Option<Entity>)>,
+    visited: HashSet<Entity>,
+}
+
+impl<'a, N, E, NF, EF> DfsIterWithDepth<'a, N, E, NF, EF>
+where
+    N: QueryData + 'static,
+    E: QueryData + 'static,
+    NF: QueryFilter + 'static,
+    EF: QueryFilter + 'static,
+{
+    fn new(graph: &'a GraphQuery<'a, 'a, N, E, NF, EF>, start: Entity) -> Self {
+        Self {
+            graph,
+            stack: vec![(start, 0, None)],
+            visited: HashSet::new(),
+        }
+    }
+}
+
+impl<'a, N, E, NF, EF> Iterator for DfsIterWithDepth<'a, N, E, NF, EF>
+where
+    N: QueryData + 'static,
+    E: QueryData + 'static,
+    NF: QueryFilter + 'static,
+    EF: QueryFilter + 'static,
+{
+    type Item = TraversalNode;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some((current, depth, parent)) = self.stack.pop() {
+            if self.visited.insert(current) {
+                for neighbor in self.graph.neighbors(current) {
+                    self.stack.push((neighbor, depth + 1, Some(current)));
+                }
+
+                return Some(TraversalNode {
+                    entity: current,
+                    depth,
+                    parent,
+                });
             }
         }
         None
@@ -525,3 +710,7 @@ impl<'w, 's> GraphQueryExt<'w, 's>
             .collect()
     }
 }
+
+#[cfg(test)]
+#[path = "queries_tests.rs"]
+mod queries_tests;
