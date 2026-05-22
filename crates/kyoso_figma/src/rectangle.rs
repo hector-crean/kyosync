@@ -5,11 +5,16 @@
 
 use bevy::prelude::*;
 use kyoso_sync::SchemaSync;
+use serde::{Deserialize, Serialize};
 
 use crate::paint::Paint;
+use crate::NodeKind;
 
-#[derive(Component, Default, Clone, Debug, PartialEq, Reflect, SchemaSync)]
+#[derive(
+    Component, Default, Clone, Debug, PartialEq, Reflect, SchemaSync, Serialize, Deserialize,
+)]
 #[reflect(Component, Default)]
+#[require(NodeKind = NodeKind::Rectangle)]
 #[schema(name = "Rectangle")]
 pub struct Rectangle {
     pub corner_radius: f32,

@@ -7,8 +7,11 @@
 
 use bevy::prelude::*;
 use kyoso_sync::SchemaSync;
+use serde::{Deserialize, Serialize};
 
-#[derive(Component, Default, Clone, Debug, PartialEq, Reflect, SchemaSync)]
+#[derive(
+    Component, Default, Clone, Debug, PartialEq, Reflect, SchemaSync, Serialize, Deserialize,
+)]
 #[reflect(Component, Default)]
 #[schema(name = "Size")]
 pub struct Size {

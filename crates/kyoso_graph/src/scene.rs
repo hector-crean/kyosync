@@ -13,6 +13,7 @@ use bevy::{
 use crate::components::{EdgeFrom, EdgeTo, OutgoingEdges};
 use crate::queries::GraphQuery;
 use crate::tree::{OrderKey, TreeEdge, TreeParent};
+use crate::Graph;
 
 /// Scene graph abstraction for hierarchical documents.
 ///
@@ -190,5 +191,102 @@ where
             .map(|(entity, _, _, _)| self.depth(entity))
             .max()
             .unwrap_or(0)
+    }
+
+    // ========================================================================
+    // Tree walks
+    // ========================================================================
+
+    /// Pre-order DFS over the subtree rooted at `root`, yielding
+    /// `(entity, depth)` for each visited entity. `depth` is relative
+    /// to `root` (i.e. `root` itself yields depth `0`).
+    ///
+    /// Children are visited in `OrderKey` order, so the traversal is
+    /// deterministic across runs given the same tree.
+    ///
+    /// The walk is built eagerly into a `Vec` and returned as an
+    /// iterator. Simpler and friendlier to the borrow checker than a
+    /// streaming iterator that holds a mutable stack across `&self`
+    /// borrows; for the realistic Figma-document scale it's not a
+    /// hot path.
+    pub fn walk_dfs_with_depth(&self, root: Entity) -> impl Iterator<Item = (Entity, usize)> {
+        let mut out: Vec<(Entity, usize)> = Vec::new();
+        let mut stack: Vec<(Entity, usize)> = vec![(root, 0)];
+        while let Some((entity, depth)) = stack.pop() {
+            out.push((entity, depth));
+            // Push children in reverse so the next pop yields the first child.
+            for child in self.children(entity).into_iter().rev() {
+                stack.push((child, depth + 1));
+            }
+        }
+        out.into_iter()
+    }
+}
+
+// ============================================================================
+// Materialize — typed-graph traversal that yields the graph's enum
+// ============================================================================
+
+/// Adapter for "given a node entity, give me the typed-graph's owned
+/// node form".
+///
+/// Each typed graph implements this on a `SystemParam` that knows how
+/// to dispatch per-variant queries (e.g.
+/// [`kyoso_figma::FigmaNodeQuery`](../../../kyoso_figma/node/struct.FigmaNodeQuery.html)).
+/// Compose with [`SceneGraph::walk_dfs_with_depth`] for typed subtree
+/// traversal, or with [`for_each_node`] for a flat marker-driven sweep.
+pub trait Materialize<G: Graph> {
+    /// Materialize the node at `entity` as the graph's owned enum
+    /// (`G::Node`), or `None` if `entity` isn't a node of this graph.
+    fn materialize_any(&self, entity: Entity) -> Option<G::Node>;
+}
+
+/// Edge counterpart to [`Materialize`]. Given an edge entity, produce
+/// the typed graph's owned edge form (`G::Edge`).
+///
+/// For graphs without typed edges (the common case today, including
+/// Figma), `G::Edge = ()` and this trait functions as a presence check
+/// — `Some(())` if the entity is an edge of this graph, `None` otherwise.
+/// For graphs with typed edges (e.g. an `EdgeCategory`-based design),
+/// the impl dispatches per-edge-variant just like `Materialize` does
+/// for nodes.
+pub trait MaterializeEdge<G: Graph> {
+    fn materialize_any_edge(&self, entity: Entity) -> Option<G::Edge>;
+}
+
+/// Iterate every entity matching `G::NodeMarker`, materialize through
+/// `mat`, and invoke `f(entity, node)` for each successful conversion.
+/// Skips entities whose materialization returns `None` (e.g. partially-
+/// synced or component-inconsistent nodes).
+pub fn for_each_node<G, M>(
+    markers: &bevy::ecs::system::Query<Entity, bevy::ecs::query::With<G::NodeMarker>>,
+    mat: &M,
+    mut f: impl FnMut(Entity, G::Node),
+) where
+    G: Graph,
+    M: Materialize<G>,
+{
+    for entity in markers.iter() {
+        if let Some(node) = mat.materialize_any(entity) {
+            f(entity, node);
+        }
+    }
+}
+
+/// Edge counterpart to [`for_each_node`]. Iterates every entity matching
+/// `G::EdgeMarker`, materializes through `mat`, and invokes
+/// `f(entity, edge)`.
+pub fn for_each_edge<G, M>(
+    markers: &bevy::ecs::system::Query<Entity, bevy::ecs::query::With<G::EdgeMarker>>,
+    mat: &M,
+    mut f: impl FnMut(Entity, G::Edge),
+) where
+    G: Graph,
+    M: MaterializeEdge<G>,
+{
+    for entity in markers.iter() {
+        if let Some(edge) = mat.materialize_any_edge(entity) {
+            f(entity, edge);
+        }
     }
 }

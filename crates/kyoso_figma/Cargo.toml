@@ -13,10 +13,12 @@ kyoso_graph_sync = { workspace = true }
 kyoso_crdt       = { workspace = true }
 kyoso_graph      = { workspace = true }
 
-bevy     = { workspace = true }
-serde    = { workspace = true }
-tracing  = { workspace = true }
-figma-api = { workspace = true }
+bevy          = { workspace = true }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+tracing       = { workspace = true }
+figma-api     = { workspace = true }
+enum_dispatch = "0.3"
 
 [dev-dependencies]
 kyoso_server       = { workspace = true }

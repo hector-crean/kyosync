@@ -36,20 +36,37 @@
 //! §XI.7.
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
+pub mod descriptor;
 pub mod frame;
 pub mod import;
+pub mod node;
 pub mod paint;
 pub mod plugin;
+pub mod query_data;
 pub mod rectangle;
 pub mod size;
 pub mod text;
 pub mod typestyle;
+pub mod visitor;
 pub mod walker;
 
+pub use descriptor::{
+    build_figma_node_descriptor, build_figma_scene_descriptor, figma_node_descriptor,
+    node_payload, node_type_str,
+};
 pub use frame::{Frame, LayoutMode};
+pub use node::{
+    FigmaNodeQuery, FrameData, Node, NodeBehavior, RectangleData, TextData,
+};
+// NodeVariant / EdgeVariant are the per-variant relator traits; re-exported
+// from `kyoso_graph` (they live there because they're graph-crate concerns).
+pub use kyoso_graph::{EdgeVariant, NodeVariant};
+pub use visitor::{SceneVisitor, Traverse, VisitContext};
 pub use paint::{GradientStop, GradientType, ImageScaleMode, Paint};
 pub use plugin::KyosoFigmaPlugin;
+pub use query_data::{AnyNodeQueryData, FrameQueryData, RectangleQueryData, TextQueryData};
 pub use rectangle::Rectangle;
 pub use size::Size;
 pub use text::Text;
@@ -71,6 +88,21 @@ pub use walker::{NodeContext, NodeVisitor, SubcanvasNodeExt, Walker};
 #[require(kyoso_graph_sync::NodePresence)]
 pub struct FigmaNode;
 
+/// Discriminator tag: which variant of [`Node`](crate::node::Node) does
+/// this entity carry? Inserted atomically with the variant's data via
+/// the `*Data` bundles (see [`FrameData`](crate::node::FrameData) etc.)
+/// so the tag and the data cannot drift apart.
+#[derive(
+    Component, Reflect, Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize,
+)]
+#[reflect(Component)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeKind {
+    Frame,
+    Rectangle,
+    Text,
+}
+
 /// Zero-sized marker: every kyoso_figma edge entity carries this. The
 /// initial cut only uses tree edges (via `kyoso_graph::tree`);
 /// reference edges (component→main, prototype links) are deferred.
@@ -78,3 +110,22 @@ pub struct FigmaNode;
 #[reflect(Component, Default)]
 #[require(kyoso_graph_sync::EdgeEndpoints)]
 pub struct FigmaEdge;
+
+// ---------------------------------------------------------------------------
+// Typed-graph trait impl — FigmaNode IS the typed graph identifier.
+// One `impl Graph for FigmaNode` replaces the previous separate
+// `TypedGraphNode` + `TypedGraphEdge` impls.
+// ---------------------------------------------------------------------------
+
+impl kyoso_graph::Graph for FigmaNode {
+    // Nodes
+    type NodeMarker = FigmaNode;
+    type Node = crate::node::Node;
+    type NodeData = crate::query_data::AnyNodeQueryData;
+    type NodeDiscriminator = NodeKind;
+    // Edges — no typed edges yet; `()` is the empty-edge-variant shape.
+    type EdgeMarker = FigmaEdge;
+    type Edge = ();
+    type EdgeData = ();
+    type EdgeDiscriminator = ();
+}

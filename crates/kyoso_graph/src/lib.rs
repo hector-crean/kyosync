@@ -1,22 +1,144 @@
+pub mod algo;
 pub mod commands;
 pub mod components;
+pub mod cost;
+pub mod descriptor;
 pub mod ecs_view;
+pub mod edge_taxonomy;
+pub mod pattern;
 pub mod queries;
+pub mod scene;
 pub mod solver;
+pub mod subgraph;
 pub mod transaction;
+pub mod traverse;
 pub mod tree;
 
 pub use commands::*;
 pub use components::*;
 pub use ecs_view::EcsGraphView;
 pub use queries::*;
+pub use scene::{for_each_edge, for_each_node, Materialize, MaterializeEdge};
 pub use solver::*;
 pub use transaction::*;
+pub use cost::{Cost, CostHint};
+pub use pattern::{Direction, PEdge, PNode, Pattern, PatternBuilder};
+pub use subgraph::{Match, SubgraphMatches};
+pub use traverse::{
+    BfsIter, BfsIterWithDepth, BfsWalk, DfsIter, DfsIterWithDepth, DfsWalk, EdgeBfsIter,
+    EdgeDfsIter, GraphNodes, GraphTraverse, GraphTraverseEdges, OrderedBfsIter, OrderedDfsIter,
+    OrderedTraverse, Reverse, Step, TraversalNode,
+};
 pub use tree::{OrderKey, TreeEdge, TreeParent, TreePlugin};
 
 use bevy::prelude::*;
-use std::fmt::Debug;
 use std::marker::PhantomData;
+
+// ============================================================================
+// Typed-graph traits
+// ============================================================================
+
+/// A typed graph: names the marker components, variant-agnostic owned
+/// forms (typically sum-type enums), borrowed query projections, and
+/// per-variant discriminators — symmetrically for nodes **and** edges.
+///
+/// Implementors are usually the node marker itself, e.g.
+/// `impl Graph for FigmaNode`. One trait impl per typed graph. For
+/// single-variant edges (or graphs without typed edges), use `()` for
+/// the edge slots.
+///
+/// ```ignore
+/// impl Graph for FigmaNode {
+///     // Nodes
+///     type NodeMarker        = FigmaNode;
+///     type Node              = kyoso_figma::Node;
+///     type NodeData          = kyoso_figma::AnyNodeQueryData;
+///     type NodeDiscriminator = kyoso_figma::NodeKind;
+///     // Edges (no variants yet)
+///     type EdgeMarker        = FigmaEdge;
+///     type Edge              = ();
+///     type EdgeData          = ();
+///     type EdgeDiscriminator = ();
+/// }
+/// ```
+///
+/// Per-variant typing lives in [`NodeVariant`] / [`EdgeVariant`];
+/// per-graph traversal lives in [`Materialize`](crate::scene::Materialize).
+/// This trait is the binding point between them.
+pub trait Graph: 'static + Send + Sync {
+    // ---- Nodes ----
+    /// Marker `Component` identifying "this entity is a node of this graph".
+    /// Used in `Added<…>` / `Changed<…>` / `With<…>` filters.
+    type NodeMarker: Component;
+    /// Variant-agnostic owned node form. Typically the sum-type enum
+    /// returned by [`NodeVariant::wrap`].
+    type Node: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static;
+    /// Variant-agnostic borrowed node projection. Plugs into
+    /// `GraphQuery<G::NodeData, _>` for typed graph-wide traversal.
+    type NodeData: bevy::ecs::query::QueryData;
+    /// Per-node-variant discriminator (e.g. an enum tag). `()` for
+    /// single-variant graphs.
+    type NodeDiscriminator: Copy + Eq + Send + Sync + 'static;
+
+    // ---- Edges ----
+    /// Marker `Component` for "this entity is an edge of this graph".
+    type EdgeMarker: Component;
+    /// Variant-agnostic owned edge form. `()` for graphs without typed
+    /// edges (the common case today — see `kyoso_graph_crdt::EdgeCategory`
+    /// for an example of where typed edges become useful).
+    type Edge: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static;
+    /// Variant-agnostic borrowed edge projection. `()` if not typed.
+    type EdgeData: bevy::ecs::query::QueryData;
+    /// Per-edge-variant discriminator. `()` if not typed.
+    type EdgeDiscriminator: Copy + Eq + Send + Sync + 'static;
+}
+
+/// A typed *node* variant within a [`Graph`]. The implementing type **is**
+/// the variant's marker `Component` (`Self: Component`), eliminating a
+/// separate `type Marker` slot.
+///
+/// ```ignore
+/// impl NodeVariant for Frame {
+///     type Graph = FigmaNode;
+///     type Data  = FrameData;
+///     type Query = FrameQueryData;
+///     const KIND: NodeKind = NodeKind::Frame;
+///     fn wrap(data: FrameData) -> Node { Node::Frame(data) }
+///     fn materialize(item: ROQueryItem<'_, '_, FrameQueryData>) -> FrameData { /* clones */ }
+/// }
+/// ```
+pub trait NodeVariant: Component + 'static {
+    type Graph: Graph;
+    type Data: bevy::prelude::Bundle
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + Default
+        + Clone;
+    type Query: bevy::ecs::query::QueryData;
+    const KIND: <Self::Graph as Graph>::NodeDiscriminator;
+    fn wrap(data: Self::Data) -> <Self::Graph as Graph>::Node;
+    fn materialize(item: bevy::ecs::query::ROQueryItem<'_, '_, Self::Query>) -> Self::Data;
+}
+
+/// A typed *edge* variant within a [`Graph`]. Mirror of [`NodeVariant`].
+/// The implementing type is the variant's edge marker `Component`.
+///
+/// No Figma impls exist today — `FigmaEdge` is a structural marker with
+/// no variants yet. The trait shape is here so future typed-edge work
+/// (e.g. reference edges → `EdgeCategory::{InstanceOf, PrototypeLink, …}`)
+/// can land without trait redesign.
+pub trait EdgeVariant: Component + 'static {
+    type Graph: Graph;
+    type Data: bevy::prelude::Bundle
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + Default
+        + Clone;
+    type Query: bevy::ecs::query::QueryData;
+    const KIND: <Self::Graph as Graph>::EdgeDiscriminator;
+    fn wrap(data: Self::Data) -> <Self::Graph as Graph>::Edge;
+    fn materialize(item: bevy::ecs::query::ROQueryItem<'_, '_, Self::Query>) -> Self::Data;
+}
 
 /// Change set tracking the origin of a node-level change.
 ///
@@ -155,7 +277,6 @@ pub enum GraphCommand {
     },
 }
 
-
 // `Graph<N, E, B>`, `GraphEntityIndex<N, E, B>`, `NodeState<N>`,
 // `EdgeState<E>`, and the `GraphBackend` trait were deleted in
 // Part IV §IV.2 Step 3. They were the swap-in seam between an
@@ -223,28 +344,33 @@ pub enum GraphSystemSet {
     SnapshotCreation,
 }
 
-/// Generic graph manager plugin that can work with any node and edge types.
+/// Graph manager plugin parameterised over the **node marker** and
+/// **edge marker** components. These are the `Component`s that
+/// change-detection systems filter on (`Added<NM>` / `Changed<NM>` /
+/// `With<NM>`).
 ///
-/// This plugin sets up the ECS infrastructure for managing graphs in Bevy:
+/// The plugin only needs markers, not the full [`Graph`] trait — that
+/// kicks in for typed traversal in the consumer crate. Pass any
+/// `Component` directly:
+/// `GraphManagerPlugin::<FigmaNode, FigmaEdge>::new()`.
+///
+/// This plugin wires up:
 /// - Change detection for nodes and edges
+/// - Topology-change tracking on the underlying edge components
+/// - Tree-position-change tracking ([`tree::TreeParent`] / [`tree::OrderKey`])
 /// - Event propagation through the graph
-/// - Synchronization with a petgraph representation
-///
-/// # Type Parameters
-/// - `Node`: The component type for graph nodes (must implement `Component`)
-/// - `Edge`: The component type for graph edges (must implement `Component`)
-pub struct GraphManagerPlugin<Node, Edge>
+pub struct GraphManagerPlugin<NM, EM>
 where
-    Node: Component + Debug,
-    Edge: Component + Debug,
+    NM: Component,
+    EM: Component,
 {
-    _phantom: PhantomData<(Node, Edge)>,
+    _phantom: PhantomData<(NM, EM)>,
 }
 
-impl<Node, Edge> GraphManagerPlugin<Node, Edge>
+impl<NM, EM> GraphManagerPlugin<NM, EM>
 where
-    Node: Component + Debug,
-    Edge: Component + Debug,
+    NM: Component,
+    EM: Component,
 {
     pub fn new() -> Self {
         Self {
@@ -253,20 +379,20 @@ where
     }
 }
 
-impl<Node, Edge> Default for GraphManagerPlugin<Node, Edge>
+impl<NM, EM> Default for GraphManagerPlugin<NM, EM>
 where
-    Node: Component + Debug,
-    Edge: Component + Debug,
+    NM: Component,
+    EM: Component,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<Node, Edge> Plugin for GraphManagerPlugin<Node, Edge>
+impl<NM, EM> Plugin for GraphManagerPlugin<NM, EM>
 where
-    Node: Component + Debug,
-    Edge: Component + Debug,
+    NM: Component,
+    EM: Component,
 {
     fn build(&self, app: &mut App) {
         app.register_type::<GraphMessage>()
@@ -294,15 +420,14 @@ where
             // Command application: consume GraphCommand messages
             .add_systems(
                 Update,
-                consume_graph_commands::<Node, Edge>
-                    .in_set(GraphSystemSet::CommandApplication),
+                consume_graph_commands::<NM, EM>.in_set(GraphSystemSet::CommandApplication),
             )
             // Change detection
             .add_systems(
                 Update,
                 (
-                    detect_node_changes::<Node, Edge>,
-                    detect_edge_changes::<Edge>,
+                    detect_node_changes::<NM, EM>,
+                    detect_edge_changes::<EM>,
                     detect_topology_changes,
                     detect_tree_position_changes,
                 )
@@ -313,7 +438,7 @@ where
             .add_systems(
                 Update,
                 (
-                    read_propagation_messages::<Node, Edge>,
+                    read_propagation_messages::<NM, EM>,
                     write_propagation_events,
                 )
                     .chain()
@@ -326,10 +451,10 @@ where
 // Command Application System
 // ============================================================================
 
-fn consume_graph_commands<Node: Component + Debug, Edge: Component + Debug>(
+fn consume_graph_commands<NM: Component, EM: Component>(
     mut commands: Commands,
     mut reader: MessageReader<GraphCommand>,
-    graph_query: GraphQuery<'_, '_, &Node, &Edge>,
+    graph_query: GraphQuery<'_, '_, &NM, &EM>,
     pending: Option<ResMut<PendingTransaction>>,
 ) {
     let mut pending = pending;
@@ -385,16 +510,16 @@ fn consume_graph_commands<Node: Component + Debug, Edge: Component + Debug>(
 // Change Detection Systems
 // ============================================================================
 
-fn detect_node_changes<Node: Component, Edge: Component>(
-    graph_query: GraphQuery<'_, '_, &Node, &Edge>,
+fn detect_node_changes<NM: Component, EM: Component>(
+    graph_query: GraphQuery<'_, '_, &NM, &EM>,
     mut graph_messages: MessageWriter<GraphMessage>,
-    added_nodes: Query<NodeQueryData<Node>, Added<Node>>,
-    mut removed_nodes: RemovedComponents<Node>,
+    added_nodes: Query<Entity, Added<NM>>,
+    mut removed_nodes: RemovedComponents<NM>,
 ) {
-    for node_data in added_nodes.iter() {
-        let neighbors = graph_query.affected_neighbors(node_data.entity);
+    for entity in added_nodes.iter() {
+        let neighbors = graph_query.affected_neighbors(entity);
         graph_messages.write(GraphMessage::NodeAdded {
-            entity: node_data.entity,
+            entity,
             initial_neighbors: neighbors,
         });
     }
@@ -408,17 +533,17 @@ fn detect_node_changes<Node: Component, Edge: Component>(
     }
 }
 
-fn detect_edge_changes<Edge: Component>(
+fn detect_edge_changes<EM: Component>(
     mut graph_messages: MessageWriter<GraphMessage>,
-    added_edges: Query<EdgeQueryData<Edge>, Added<Edge>>,
-    mut removed_edges: RemovedComponents<Edge>,
-    edges: Query<(&EdgeFrom, &EdgeTo), With<Edge>>,
+    added_edges: Query<(Entity, &EdgeFrom, &EdgeTo), Added<EM>>,
+    mut removed_edges: RemovedComponents<EM>,
+    edges: Query<(&EdgeFrom, &EdgeTo), With<EM>>,
 ) {
-    for edge_data in added_edges.iter() {
+    for (entity, edge_from, edge_to) in added_edges.iter() {
         graph_messages.write(GraphMessage::EdgeAdded {
-            entity: edge_data.entity,
-            from: edge_data.edge_from.0,
-            to: edge_data.edge_to.0,
+            entity,
+            from: edge_from.0,
+            to: edge_to.0,
         });
     }
 
@@ -493,9 +618,9 @@ struct PropagationBuffer {
     events: Vec<GraphMessage>,
 }
 
-fn read_propagation_messages<Node: Component, Edge: Component>(
+fn read_propagation_messages<NM: Component, EM: Component>(
     config: Res<GraphEventPropagationConfig>,
-    graph_query: GraphQuery<'_, '_, &Node, &Edge>,
+    graph_query: GraphQuery<'_, '_, &NM, &EM>,
     mut reader: MessageReader<GraphMessage>,
     mut buffer: ResMut<PropagationBuffer>,
 ) {
@@ -610,4 +735,3 @@ fn write_propagation_events(
         graph_messages.write(event);
     }
 }
-

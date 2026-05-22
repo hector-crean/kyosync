@@ -8,8 +8,9 @@
 
 use bevy::prelude::*;
 use kyoso_sync::SchemaSync;
+use serde::{Deserialize, Serialize};
 
-#[derive(Component, Clone, Debug, PartialEq, Reflect, SchemaSync)]
+#[derive(Component, Clone, Debug, PartialEq, Reflect, SchemaSync, Serialize, Deserialize)]
 #[reflect(Component, Default)]
 #[schema(name = "TypeStyle")]
 pub struct TypeStyle {
