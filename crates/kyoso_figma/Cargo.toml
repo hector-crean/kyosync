@@ -5,27 +5,15 @@ authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Bevy-native, opinionated Figma-shaped document model + figma_api import adapter for kyoso"
+description = "Figma REST API → kyoso_core ECS import adapter"
 
 [dependencies]
-kyoso_sync       = { workspace = true }
-kyoso_graph_sync = { workspace = true }
-kyoso_crdt       = { workspace = true }
-kyoso_graph      = { workspace = true }
+kyoso_core  = { workspace = true }
+kyoso_graph = { workspace = true }
 
-bevy          = { workspace = true }
-serde         = { workspace = true }
-serde_json    = { workspace = true }
-tracing       = { workspace = true }
-figma-api     = { workspace = true }
-enum_dispatch = "0.3"
-
-[dev-dependencies]
-kyoso_server       = { workspace = true }
-serde_json         = { workspace = true }
-tokio              = { workspace = true }
-axum               = { workspace = true }
-tracing-subscriber = { workspace = true }
+bevy      = { workspace = true }
+tracing   = { workspace = true }
+figma-api = { workspace = true }
 
 [lints]
 workspace = true

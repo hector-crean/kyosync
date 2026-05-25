@@ -1,7 +1,7 @@
 //! Per-component schemas for circuit nodes.
 //!
 //! Each module defines one Bevy `Component` with `derive(SchemaSync)`,
-//! mirroring the kyoso_figma per-shape pattern (`Frame`, `Rectangle`,
+//! mirroring the kyoso_core per-shape pattern (`Frame`, `Rectangle`,
 //! `Text`). Scalar parameters use LWW. The component kinds are mutually
 //! exclusive on a given entity — exactly one of them is paired with the
 //! [`crate::CircuitNode`] structural marker.

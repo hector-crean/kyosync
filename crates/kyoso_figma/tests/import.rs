@@ -13,7 +13,8 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use figma_api::models;
 use figma_api::models::{BlendMode, Effect, FlowStartingPoint, Paint, PrototypeDevice, Rgba};
-use kyoso_figma::{import::import_canvas, FigmaNode, Frame, Rectangle, Text};
+use kyoso_core::{Frame, Rectangle, SceneNode, Text};
+use kyoso_figma::import::import_canvas;
 
 fn make_rgba(r: f64, g: f64, b: f64, a: f64) -> Rgba {
     Rgba { r, g, b, a }
@@ -123,7 +124,7 @@ fn import_supported_nodes_and_skip_unsupported() {
         .expect("a Frame was imported");
     assert_eq!(frame.name, "Header");
     assert!(frame.clips_content);
-    assert_eq!(frame.layout_mode, kyoso_figma::LayoutMode::Horizontal);
+    assert_eq!(frame.layout_mode, kyoso_core::LayoutMode::Horizontal);
     assert_eq!(frame.fills.len(), 1);
 
     // ---- Rectangle ----
@@ -146,9 +147,9 @@ fn import_supported_nodes_and_skip_unsupported() {
     assert!((text.style.font_size - 18.0).abs() < 0.001);
     assert_eq!(text.style.font_weight, 700);
 
-    // Every spawned entity carries the structural FigmaNode marker.
-    let figma_nodes = world.query::<&FigmaNode>().iter(&world).count();
-    assert_eq!(figma_nodes, 3);
+    // Every spawned entity carries the structural SceneNode marker.
+    let scene_nodes = world.query::<&SceneNode>().iter(&world).count();
+    assert_eq!(scene_nodes, 3);
 }
 
 /// Wrap `import_canvas` so it runs through `world.run_system_cached_with`

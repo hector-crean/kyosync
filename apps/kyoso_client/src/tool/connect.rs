@@ -33,7 +33,7 @@
 
 use bevy::picking::events::{Click, DragDrop, DragEnd, DragStart, Pointer};
 use bevy::prelude::*;
-use kyoso_figma::Frame;
+use kyoso_core::Frame;
 use serde::{Deserialize, Serialize};
 
 use crate::msg::{AppCommand, AppEvent, ExternalId, GraphCommandExt};

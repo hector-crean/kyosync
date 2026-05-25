@@ -24,7 +24,7 @@
 //! the components they observe, in [`crate::scene`].
 
 use bevy::prelude::*;
-use kyoso_figma::FigmaEdge;
+use kyoso_core::SceneEdge;
 use kyoso_graph::components::{EdgeFrom, EdgeTo};
 
 use crate::msg::{
@@ -47,7 +47,7 @@ pub fn dispatch_app_commands(
     mut connect_w: MessageWriter<ConnectCommand>,
     mut events: MessageWriter<AppEvent>,
     index: Res<SyncedIndex>,
-    edges: Query<(Entity, &EdgeFrom, &EdgeTo), With<FigmaEdge>>,
+    edges: Query<(Entity, &EdgeFrom, &EdgeTo), With<SceneEdge>>,
 ) {
     for cmd in reader.read() {
         match cmd {
@@ -111,7 +111,7 @@ fn dispatch_connect(
         return;
     };
     let mut spawned = commands.spawn((
-        FigmaEdge,
+        SceneEdge,
         EdgeFrom(from_entity),
         EdgeTo(to_entity),
     ));
@@ -121,7 +121,7 @@ fn dispatch_connect(
 fn dispatch_disconnect(
     commands: &mut Commands,
     index: &SyncedIndex,
-    edges: &Query<(Entity, &EdgeFrom, &EdgeTo), With<FigmaEdge>>,
+    edges: &Query<(Entity, &EdgeFrom, &EdgeTo), With<SceneEdge>>,
     events: &mut MessageWriter<AppEvent>,
     from: ExternalId,
     to: ExternalId,

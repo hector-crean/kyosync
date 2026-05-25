@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender};
 use kyoso_client::msg::{create_duplex_plugin, AppCommand, AppEvent, Pos2, Rgb, GLOBAL};
-use kyoso_figma::Frame;
+use kyoso_core::Frame;
 use kyoso_client::tool::{CreateCommand, Tool, ToolCommand};
 use kyoso_client::AppPlugin;
 use kyoso_server::{AppState, app};

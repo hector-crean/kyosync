@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::msg::{AppCommand, AppEvent, ExternalId, GraphCommandExt};
-use kyoso_figma::Frame;
+use kyoso_core::Frame;
 use crate::tool::Tool;
 
 /// Local-only marker on entities the user has currently selected.
@@ -201,7 +201,7 @@ fn handle_delete_key(
 /// Requires `Assets<Mesh>` / `Assets<ColorMaterial>`, so it's wired
 /// into [`crate::VisualPlugin`] rather than the headless tool plugin.
 pub fn add_selection_outline(
-    just_selected: Query<(Entity, Option<&kyoso_figma::Size>), (Added<Selected>, With<Frame>)>,
+    just_selected: Query<(Entity, Option<&kyoso_core::Size>), (Added<Selected>, With<Frame>)>,
     mut commands: Commands,
     meshes: Option<ResMut<Assets<Mesh>>>,
     materials: Option<ResMut<Assets<ColorMaterial>>>,

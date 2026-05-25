@@ -13,7 +13,7 @@ kyoso_crdt       = { workspace = true }
 kyoso_graph_crdt = { workspace = true }
 kyoso_sync       = { workspace = true }
 kyoso_graph_sync = { workspace = true }
-kyoso_figma    = { workspace = true }
+kyoso_core     = { workspace = true }
 kyoso_polyline = { workspace = true }
 kyoso_drag     = { workspace = true }
 kyoso_camera   = { workspace = true }

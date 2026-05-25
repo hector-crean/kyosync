@@ -14,8 +14,8 @@
 //!   active 2D camera and forwards as a `SpawnNodeAt`.
 
 use bevy::prelude::*;
-use kyoso_figma::paint::Paint;
-use kyoso_figma::{FigmaNode, Frame, Size};
+use kyoso_core::paint::Paint;
+use kyoso_core::{Frame, SceneNode, Size};
 use serde::{Deserialize, Serialize};
 
 use crate::msg::{AppCommand, AppEvent, Pos2, Rgb};
@@ -85,11 +85,11 @@ fn handle_create_commands(
 fn spawn_node(commands: &mut Commands, position: Pos2, color: Rgb) -> Entity {
     commands
         .spawn((
-            FigmaNode,
+            SceneNode,
             Frame {
                 name: String::new(),
                 clips_content: true,
-                layout_mode: kyoso_figma::LayoutMode::None,
+                layout_mode: kyoso_core::LayoutMode::None,
                 fills: vec![Paint::Solid {
                     color: [color.r, color.g, color.b, 1.0],
                 }],
@@ -101,8 +101,8 @@ fn spawn_node(commands: &mut Commands, position: Pos2, color: Rgb) -> Entity {
                 height: 100.0,
             },
             Transform::from_xyz(position.x, position.y, 0.0),
-            // `kyoso_figma::Frame` doesn't `#[require(Visibility)]` because
-            // the kyoso_figma crate uses bevy with `default-features =
+            // `kyoso_core::Frame` doesn't `#[require(Visibility)]` because
+            // the kyoso_core crate uses bevy with `default-features =
             // false` (no bevy_render). Add it here so the mesh enters the
             // render / picking pipeline.
             Visibility::default(),

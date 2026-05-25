@@ -1,6 +1,6 @@
 //! `kyoso_client` — the visual Bevy client for kyoso.
 //!
-//! ## Architecture (Figma-shape, agent-first)
+//! ## Architecture (scene-shape, agent-first)
 //!
 //! - **[`Tool`](tool::Tool)** is a Bevy `States`. Exactly one tool is
 //!   active at a time (Select / Create / Connect / …). Each tool has
@@ -30,7 +30,7 @@
 use bevy::prelude::*;
 use kyoso_camera::controller::DefaultCameraSettings;
 use kyoso_drag::two_d::DragTransform2dPlugin;
-use kyoso_figma::KyosoFigmaPlugin;
+use kyoso_core::KyosoCorePlugin;
 use kyoso_polyline::prelude::PolylinePlugin;
 
 pub mod handlers;
@@ -48,7 +48,7 @@ pub use weave::{
     AnnotationMarker, CommentMarker, DependencyMarker, ReferenceMarker, WeaveEdgeKind,
 };
 
-/// Headless app plugin. Wires the figma+weave document model
+/// Headless app plugin. Wires the scene+weave document model
 /// (frames + typed cross-frame edges), CRDT sync, AppCommand dispatch,
 /// per-tool plugins, and AppEvent emission. No rendering, no input —
 /// pair with [`VisualPlugin`] for the windowed client.
@@ -60,10 +60,10 @@ pub struct AppPlugin {
 impl Plugin for AppPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
-            // The figma side: `FigmaNode`/`FigmaEdge` markers as N/E,
+            // The scene side: `SceneNode`/`SceneEdge` markers as N/E,
             // typed schemas for `Frame` (and Rectangle/Text/TypeStyle/
             // Size/Transform) wired in.
-            KyosoFigmaPlugin {
+            KyosoCorePlugin {
                 server_url: self.server_url.clone(),
                 room: self.room.clone(),
             },
@@ -115,7 +115,7 @@ impl Plugin for VisualPlugin {
         app.add_plugins(UiPlugin);
         app.add_systems(Startup, setup_camera);
         app.add_observer(scene::on_frame_added);
-        app.add_observer(scene::on_figma_edge_added);
+        app.add_observer(scene::on_scene_edge_added);
         app.add_systems(
             Update,
             (

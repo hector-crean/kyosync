@@ -1,10 +1,10 @@
-//! Scene primitives for the figma+weave hybrid app.
+//! Scene primitives for the scene+weave hybrid app.
 //!
-//! - **Nodes** are kyoso_figma `Frame` entities. `kyoso_figma::FigmaNode`
+//! - **Nodes** are kyoso_core `Frame` entities. `kyoso_core::SceneNode`
 //!   is the structural marker; the `Frame` component carries the
 //!   per-field synced state (name, fills, layout, etc.).
 //! - **Edges** are weave-style typed cross-frame relationships. Each
-//!   carries `EdgeFrom`/`EdgeTo`, `kyoso_figma::FigmaEdge` (the
+//!   carries `EdgeFrom`/`EdgeTo`, `kyoso_core::SceneEdge` (the
 //!   structural marker for `<E>` in `kyoso_graph_sync::GraphSyncPlugin`),
 //!   and exactly one of the per-kind marker components from
 //!   [`crate::weave`]. A reusable polyline rendering plumbs colour
@@ -13,7 +13,7 @@
 //! AppEvent projection (`NodeAppeared` / `NodeMoved` / `EdgeAppeared` /
 //! removals) follows the same shape as before — those are abstract
 //! events tied to the `EntityCrdtIndex`, not to a specific component
-//! type — but the queries now match `Frame` and `FigmaEdge` instead of
+//! type — but the queries now match `Frame` and `SceneEdge` instead of
 //! the old `GraphNode` / `GraphEdge`.
 
 use std::collections::HashMap;
@@ -21,8 +21,8 @@ use std::collections::HashMap;
 use bevy::math::primitives::Rectangle as RectangleShape;
 use bevy::prelude::*;
 use kyoso_drag::two_d::Draggable2d;
-use kyoso_figma::paint::Paint;
-use kyoso_figma::{FigmaEdge, FigmaNode, Frame, Size};
+use kyoso_core::paint::Paint;
+use kyoso_core::{Frame, SceneEdge, SceneNode, Size};
 use kyoso_graph::components::{EdgeFrom, EdgeTo};
 
 use crate::msg::{AppEvent, ExternalId, GraphMessageExt};
@@ -68,8 +68,8 @@ pub fn on_frame_added(
         return;
     };
     // `Visibility` is required for the mesh to enter the render /
-    // picking pipeline. `kyoso_figma::Frame` can't `#[require]` it
-    // because kyoso_figma uses bevy with `default-features = false`
+    // picking pipeline. `kyoso_core::Frame` can't `#[require]` it
+    // because kyoso_core uses bevy with `default-features = false`
     // (no bevy_render). Insert it here on every frame add (local
     // spawn AND remote `InsertSchemaProjected`) — `insert` is
     // idempotent if the component is already present.
@@ -137,19 +137,19 @@ pub fn sync_frame_visuals(
 // Edge visuals
 // ---------------------------------------------------------------------------
 
-/// On-add observer for `FigmaEdge` entities. The actual drawing is
+/// On-add observer for `SceneEdge` entities. The actual drawing is
 /// done immediate-mode by [`draw_edges_with_gizmos`] every frame, so
 /// the only thing the observer needs to do is make sure the entity has
 /// a `Transform` (used internally by Bevy's hierarchy machinery; not
 /// used by the gizmo renderer itself).
-pub fn on_figma_edge_added(
-    trigger: On<Add, FigmaEdge>,
+pub fn on_scene_edge_added(
+    trigger: On<Add, SceneEdge>,
     mut commands: Commands,
 ) {
     commands.entity(trigger.entity).insert(Transform::default());
 }
 
-/// Per-frame: draw every figma-edge as a 2D gizmo line from its source
+/// Per-frame: draw every scene edge as a 2D gizmo line from its source
 /// frame's world position to its target frame's world position.
 /// Color matches the edge's `WeaveEdgeKind` (or default Reference blue
 /// if no marker is present).
@@ -161,7 +161,7 @@ pub fn on_figma_edge_added(
 /// ghost line in the Connect tool.
 pub fn draw_edges_with_gizmos(
     mut gizmos: Gizmos,
-    edges: Query<(Entity, &EdgeFrom, &EdgeTo), With<FigmaEdge>>,
+    edges: Query<(Entity, &EdgeFrom, &EdgeTo), With<SceneEdge>>,
     refs: Query<(), With<ReferenceMarker>>,
     deps: Query<(), With<DependencyMarker>>,
     comments: Query<(), With<CommentMarker>>,
@@ -189,7 +189,7 @@ pub fn draw_edges_with_gizmos(
 /// Project newly-added node entities (Frames) into
 /// `AppEvent::Graph(NodeAppeared)`.
 pub fn emit_node_appeared(
-    nodes: Query<(Entity, &Transform), Added<FigmaNode>>,
+    nodes: Query<(Entity, &Transform), Added<SceneNode>>,
     index: Res<SyncedIndex>,
     mut cache: ResMut<ExternalIdCache>,
     mut events: MessageWriter<AppEvent>,
@@ -209,7 +209,7 @@ pub fn emit_node_appeared(
 /// Project Transform changes on figma node entities into
 /// `AppEvent::Graph(NodeMoved)`.
 pub fn emit_node_moved(
-    moved: Query<(Entity, &Transform), (Changed<Transform>, With<FigmaNode>)>,
+    moved: Query<(Entity, &Transform), (Changed<Transform>, With<SceneNode>)>,
     index: Res<SyncedIndex>,
     mut events: MessageWriter<AppEvent>,
 ) {
@@ -226,7 +226,7 @@ pub fn emit_node_moved(
 
 /// Project despawned node entities into `AppEvent::Graph(NodeRemoved)`.
 pub fn emit_node_removed(
-    mut removed: RemovedComponents<FigmaNode>,
+    mut removed: RemovedComponents<SceneNode>,
     mut cache: ResMut<ExternalIdCache>,
     mut events: MessageWriter<AppEvent>,
 ) {
@@ -240,7 +240,7 @@ pub fn emit_node_removed(
 /// Project newly-added edge entities into
 /// `AppEvent::Graph(EdgeAppeared)`.
 pub fn emit_edge_appeared(
-    edges: Query<(Entity, &EdgeFrom, &EdgeTo), Added<FigmaEdge>>,
+    edges: Query<(Entity, &EdgeFrom, &EdgeTo), Added<SceneEdge>>,
     index: Res<SyncedIndex>,
     mut cache: ResMut<ExternalIdCache>,
     mut events: MessageWriter<AppEvent>,
@@ -266,7 +266,7 @@ pub fn emit_edge_appeared(
 
 /// Project despawned edge entities into `AppEvent::Graph(EdgeRemoved)`.
 pub fn emit_edge_removed(
-    mut removed: RemovedComponents<FigmaEdge>,
+    mut removed: RemovedComponents<SceneEdge>,
     mut cache: ResMut<ExternalIdCache>,
     mut events: MessageWriter<AppEvent>,
 ) {

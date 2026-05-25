@@ -23,7 +23,7 @@
 //!   `SyncTransportPlugin`, `GraphSyncPlugin<CircuitNode, CircuitEdge>`,
 //!   and one `SchemaSyncedComponentPlugin` per component type.
 //!
-//! The sibling `kyoso_figma` crate is the design-tool counterpart;
+//! The sibling `kyoso_core` crate is the design-tool counterpart;
 //! kyoso_circuit is its analogue for schematic capture.
 
 use bevy::prelude::*;

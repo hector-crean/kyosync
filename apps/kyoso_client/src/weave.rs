@@ -1,6 +1,6 @@
 //! Weave-style typed cross-frame edges.
 //!
-//! Where `kyoso_figma::tree::TreeEdge` represents the design hierarchy
+//! Where `kyoso_graph::tree::TreeEdge` represents the design hierarchy
 //! (a frame's children), `WeaveEdgeKind` represents *relationships*
 //! between frames — the FigJam/Weave side of the hybrid app. Each kind
 //! is a separate per-variant ZST marker that ships through the
@@ -16,7 +16,7 @@
 //!   to a `kyoso_crdt::EdgeCategory::Custom("kebab-name")` on the wire.
 //! - On spawn the user's Connect tool drops the matching marker on the
 //!   edge entity along with the structural `(EdgeFrom, EdgeTo,
-//!   FigmaEdge)`. On inbound projection, [`SyncedEdgeCategoryPlugin`]
+//!   SceneEdge)`. On inbound projection, [`SyncedEdgeCategoryPlugin`]
 //!   re-attaches the marker on the receiving peer (Part V §V.1).
 //! - `WeaveEdgeKind::color()` gives each kind a distinct render colour;
 //!   used by the polyline material in `scene.rs`.
@@ -114,7 +114,7 @@ pub fn insert_marker_for(commands: &mut EntityCommands<'_>, kind: WeaveEdgeKind)
 
 /// Inverse: given an entity's marker components, identify its kind.
 /// Returns `None` if the entity has no recognised weave-edge marker
-/// (in which case it's a raw `FigmaEdge` with no category).
+/// (in which case it's a raw `SceneEdge` with no category).
 pub fn kind_of_entity(
     entity: Entity,
     refs: &Query<(), With<ReferenceMarker>>,

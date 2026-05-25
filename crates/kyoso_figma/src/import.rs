@@ -1,10 +1,9 @@
 //! Figma file import adapter — read-only, best-effort.
 //!
-//! Walks a `figma_api::CanvasNode` and spawns kyoso_figma Bevy
+//! Walks a `figma_api::CanvasNode` and spawns `kyoso_core` Bevy
 //! components for each supported node kind (Frame / Rectangle / Text).
 //! Unsupported variants are logged via `tracing::warn!` and skipped;
-//! the spawned tree may have gaps where unsupported nodes were skipped
-//! (per plan doc Part XI §XI.4).
+//! the spawned tree may have gaps where unsupported nodes were skipped.
 //!
 //! ```ignore
 //! use bevy::prelude::*;
@@ -42,13 +41,12 @@ use bevy::prelude::*;
 use figma_api::models::{
     CanvasNode, FrameNode, Paint as FigmaPaint, RectangleNode, SubcanvasNode, TextNode,
 };
-use kyoso_graph::tree::{OrderKey, TreeParent};
+use kyoso_core::paint::{GradientStop, GradientType, ImageScaleMode, Paint};
+use kyoso_core::typestyle::TypeStyle;
+use kyoso_core::{Frame, LayoutMode, Rectangle, SceneNode, Size, Text};
+use kyoso_graph::tree::OrderKey;
 
-use crate::frame::LayoutMode;
-use crate::paint::{GradientStop, GradientType, ImageScaleMode, Paint};
-use crate::typestyle::TypeStyle;
 use crate::walker::{NodeContext, NodeVisitor, Walker};
-use crate::{FigmaNode, Frame, Rectangle, Size, Text};
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -108,28 +106,23 @@ impl<'w, 's> KyosoVisitor<'w, 's> {
         OrderKey(key)
     }
 
-    /// Spawn the common bundle for a kyoso_figma node entity:
-    /// `FigmaNode` marker + `Transform::default()` + tree edge to the
-    /// current parent (if any).
+    /// Spawn the common bundle for a kyoso_core node entity:
+    /// `SceneNode` marker + `Transform::default()` + `ChildOf(parent)`
+    /// (if any) + `OrderKey` for sibling ordering. Bevy's hierarchy
+    /// machinery auto-maintains `Children` on the parent.
     fn spawn_with_parent(&mut self, extra: impl Bundle) -> Entity {
         let parent = self.current_parent();
-        let order_key = if parent.is_some() {
-            self.next_order_key()
-        } else {
-            // Top-level under the canvas — bump the root counter so
-            // multiple top-level frames each get unique keys.
-            self.next_order_key()
-        };
-        let entity = self
-            .commands
-            .spawn((
-                FigmaNode,
-                Transform::default(),
-                TreeParent(parent),
-                order_key,
-                extra,
-            ))
-            .id();
+        let order_key = self.next_order_key();
+        let mut entity_commands = self.commands.spawn((
+            SceneNode,
+            Transform::default(),
+            order_key,
+            extra,
+        ));
+        if let Some(p) = parent {
+            entity_commands.insert(ChildOf(p));
+        }
+        let entity = entity_commands.id();
         self.spawned.push(entity);
         entity
     }
