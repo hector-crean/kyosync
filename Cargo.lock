@@ -2833,18 +2833,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "enum_dispatch"
-version = "0.3.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa18ce2bc66555b3218614519ac839ddb759a7d6720732f979ef8d13be147ecd"
-dependencies = [
- "once_cell",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4110,6 +4098,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kyoso_agent"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "kyoso_core",
+ "kyoso_crdt",
+ "kyoso_graph",
+ "kyoso_graph_sync",
+ "serde_json",
+]
+
+[[package]]
 name = "kyoso_camera"
 version = "0.1.0"
 dependencies = [
@@ -4164,9 +4164,9 @@ dependencies = [
  "bevy",
  "crossbeam-channel",
  "kyoso_camera",
+ "kyoso_core",
  "kyoso_crdt",
  "kyoso_drag",
- "kyoso_figma",
  "kyoso_graph",
  "kyoso_graph_crdt",
  "kyoso_graph_sync",
@@ -4179,6 +4179,24 @@ dependencies = [
  "strum",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "kyoso_core"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bevy",
+ "kyoso_crdt",
+ "kyoso_graph",
+ "kyoso_graph_sync",
+ "kyoso_server",
+ "kyoso_sync",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -4215,20 +4233,11 @@ dependencies = [
 name = "kyoso_figma"
 version = "0.1.0"
 dependencies = [
- "axum",
  "bevy",
- "enum_dispatch",
  "figma-api",
- "kyoso_crdt",
+ "kyoso_core",
  "kyoso_graph",
- "kyoso_graph_sync",
- "kyoso_server",
- "kyoso_sync",
- "serde",
- "serde_json",
- "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

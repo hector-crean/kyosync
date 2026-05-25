@@ -33,10 +33,12 @@ kyoso_server = { path = "apps/kyoso_server" }
 kyoso_sync = { path = "crates/kyoso_sync" }
 kyoso_sync_derive = { path = "crates/kyoso_sync_derive" }
 kyoso_figma = { path = "crates/kyoso_figma" }
+kyoso_core  = { path = "crates/kyoso_core" }
 kyoso_camera = { path = "crates/kyoso_camera" }
 kyoso_drag = { path = "crates/kyoso_drag" }
 kyoso_polyline = { path = "crates/kyoso_polyline" }
 kyoso_client = { path = "apps/kyoso_client" }
+kyoso_agent  = { path = "apps/kyoso_agent" }
 kyoso_circuit = { path = "crates/kyoso_circuit" }
 kyoso_circuit_client = { path = "apps/kyoso_circuit_client" }
 kyoso_scenarios = { path = "crates/kyoso_scenarios" }
