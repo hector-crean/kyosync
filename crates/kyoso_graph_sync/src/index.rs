@@ -6,6 +6,7 @@
 
 use bevy::prelude::*;
 use kyoso_crdt::CrdtId;
+use kyoso_graph::traversal::NodeIdResolver;
 use std::collections::HashMap;
 
 /// Bidirectional mapping between Bevy `Entity`s and the [`CrdtId`]s
@@ -77,6 +78,21 @@ impl EntityCrdtIndex {
 
     pub fn is_empty(&self) -> bool {
         self.node_of_entity.is_empty() && self.edge_of_entity.is_empty()
+    }
+}
+
+/// Resolve `Entity → CrdtId` for nodes only. Edges have their own
+/// id space and aren't covered here — the agent-facing traversal walks
+/// nodes, not edges.
+///
+/// Plugged into `kyoso_graph::traversal::WorldGraphView::traverse_with`
+/// to surface entities as [`kyoso_graph::traversal::NodeRef::Replicated`]
+/// when they're bound in the index, or `Local` otherwise.
+impl NodeIdResolver for EntityCrdtIndex {
+    type Id = CrdtId;
+
+    fn resolve(&self, entity: Entity) -> Option<CrdtId> {
+        self.node_of_entity.get(&entity).copied()
     }
 }
 
