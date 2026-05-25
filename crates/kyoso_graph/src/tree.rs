@@ -1,41 +1,51 @@
-//! Tree primitive layered on top of the directed-graph core.
+//! Tree primitive layered on top of Bevy's native `Children` / `ChildOf`
+//! hierarchy.
 //!
-//! A *tree* is a constrained subgraph of the main graph: every child has at
-//! most one incoming edge marked with [`TreeEdge`], and the relation must
-//! be acyclic. Children are ordered by [`OrderKey`] — a fractional index
-//! string sorted lexicographically — so the parent's children form an
-//! ordered list without anyone holding a `Vec<Entity>` that needs
-//! rewriting on every insert.
+//! ## Why Bevy's hierarchy, not entity-edges
 //!
-//! This shape is what Figma-style scene graphs and most workflow editors
-//! want, and it maps cleanly onto tree CRDTs (Loro, Yjs, Kleppmann) when
-//! a CRDT-backed [`crate::backend::GraphBackend`] is plugged in: a single
-//! [`OrderKey`] per child is the only piece of mutable position state
-//! that needs to merge.
+//! A *tree* is one parent per child plus an ordered sibling list. Bevy's
+//! `#[relationship]`-derived [`Children`] / [`ChildOf`] pair gives us
+//! that natively: `ChildOf` is one component on the child pointing to
+//! the parent; `Children` is an auto-maintained `SmallVec<Entity>` on
+//! the parent. Re-parenting is a single [`EntityCommands::add_child`]
+//! call which removes the old `ChildOf` and inserts the new one. No
+//! edge entities, no parallel parent caches.
+//!
+//! The sibling order Bevy maintains by insertion isn't what we want
+//! though — we need *deterministic* ordering across peers that have
+//! seen different concurrent inserts. That's what [`OrderKey`] is for:
+//! a fractional-index string stored per child, sorted lexicographically
+//! when reading children. Strings let you insert between any two
+//! existing siblings without renumbering anyone, which maps cleanly
+//! onto tree CRDTs (Loro, Yjs, Kleppmann) — a single `OrderKey` per
+//! child is the only piece of mutable position state that needs to
+//! merge.
+//!
+//! ## The pair: `ChildOf` + `OrderKey`
+//!
+//! - `ChildOf(parent)` — structural; absent on root nodes.
+//! - `OrderKey("...")` — sibling ordering; consulted by [`TreeQuery`]
+//!   when enumerating children. Roots can carry one too if they need
+//!   forest ordering, otherwise it's ignored.
+//!
+//! ## Reading the tree
+//!
+//! Use [`TreeQuery`] inside a Bevy system. It's the canonical agent-
+//! facing one-hop view: `parent`, `children` (OrderKey-sorted), `roots`,
+//! `depth`, `walk_dfs_with_depth`, and `GraphTraverse` for composing
+//! with the closure-driven walks in [`crate::traverse`].
 
+use bevy::ecs::query::QueryFilter;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::components::{EdgeFrom, EdgeTo, IncomingEdges, OutgoingEdges};
+use crate::traverse::GraphTraverse;
 use crate::{GraphCommand, GraphSystemSet};
 
-/// Marker on an edge entity declaring it the parent→child link of a tree.
-///
-/// `EdgeFrom` carries the parent, `EdgeTo` the child. The same generic
-/// graph traversal in [`crate::queries::GraphQuery`] applies; the marker
-/// just lets tree-aware systems filter to tree edges.
-#[derive(Component, Debug, Default, Clone, Copy, Reflect, Serialize, Deserialize)]
-#[reflect(Component, Default)]
-pub struct TreeEdge;
-
-/// Per-child cache of the current tree parent. Set by
-/// [`apply_tree_commands`] alongside the `TreeEdge` entity it spawns,
-/// so consumers (and the sync layer) can answer "who is your parent?"
-/// without walking incoming-edge queries each frame. `None` means the
-/// node is currently a root.
-#[derive(Component, Debug, Default, Clone, Copy, Reflect)]
-#[reflect(Component, Default)]
-pub struct TreeParent(pub Option<Entity>);
+// ============================================================================
+// OrderKey — fractional-index sibling ordering
+// ============================================================================
 
 /// Per-child fractional ordering key.
 ///
@@ -92,13 +102,9 @@ impl OrderKey {
             }
             prefix.push(b);
         }
-        // `r` is all 'a's (rare). Append 'a' to dive deeper; this is
-        // strictly greater than `r`, which is wrong, so push a sentinel
-        // mid char one level deeper. With `r = "aa..."`, returning
-        // `"a..a a"` (l prefix + "a" + "a") wouldn't be less than r either.
-        // First-cut fallback: panic loudly so the issue is visible.
-        // Production code should pick a richer alphabet that includes
-        // characters below 'a'.
+        // `r` is all 'a's (rare); the alphabet is exhausted. Production
+        // code should pick a richer alphabet that includes characters
+        // below 'a'.
         panic!("OrderKey::before: cannot produce a key smaller than {r:?}; alphabet is exhausted");
     }
 
@@ -123,6 +129,203 @@ impl OrderKey {
     }
 }
 
+// ============================================================================
+// TreeQuery — agent-facing one-hop view over Bevy's hierarchy + OrderKey
+// ============================================================================
+
+/// Read-only `SystemParam` over Bevy's native [`Children`] / [`ChildOf`]
+/// pair plus our [`OrderKey`] for deterministic sibling ordering.
+///
+/// Parallel-safe in-system traversal: declares its component access so
+/// Bevy can schedule alongside other systems. Use this for any
+/// hierarchical read (parent lookup, ordered child enumeration, depth
+/// computation, walks).
+///
+/// ## Optional `F` filter
+///
+/// The `F: QueryFilter` parameter narrows every internal query so the
+/// tree view only sees entities that satisfy `F`. Default `F = ()`
+/// (no filter) walks every tree-participating entity in the world —
+/// the right shape for agent traversal that should surface bare
+/// overlays too.
+///
+/// Couple this with the node-side filter on
+/// [`crate::queries::GraphQuery`] via the [`crate::scene::Scene`]
+/// combined SystemParam, e.g.
+/// `Scene<&SceneNode, &SceneEdge, With<SceneNode>>` — both layers
+/// then operate on the same SceneNode-marked entity set.
+///
+/// For *graph* reads (entity-edges with marker filters, typed
+/// edge variants) use [`crate::queries::GraphQuery`] — that's a
+/// different access pattern, not a wrapping of this one.
+#[derive(SystemParam)]
+pub struct TreeQuery<'w, 's, F = ()>
+where
+    F: QueryFilter + 'static,
+{
+    children_q: Query<'w, 's, &'static Children, F>,
+    child_of_q: Query<'w, 's, &'static ChildOf, F>,
+    order_key_q: Query<'w, 's, &'static OrderKey, F>,
+    /// Read every entity that carries `ChildOf` *and satisfies `F`*.
+    /// Used by enumeration helpers (`node_count`, `max_depth`).
+    parents_q: Query<'w, 's, Entity, (With<ChildOf>, F)>,
+    /// Read every entity that has `Children` *and satisfies `F`*.
+    /// Used by [`roots`](Self::roots) and enumeration.
+    has_children_q: Query<'w, 's, Entity, (With<Children>, F)>,
+}
+
+impl<F> TreeQuery<'_, '_, F>
+where
+    F: QueryFilter + 'static,
+{
+    /// Get the parent of `node`, or `None` if it's a root (has no
+    /// [`ChildOf`] component).
+    pub fn parent(&self, node: Entity) -> Option<Entity> {
+        self.child_of_q.get(node).ok().map(|c| c.parent())
+    }
+
+    /// Get all children of `parent`, sorted by [`OrderKey`].
+    /// Children without an `OrderKey` are filtered out — every tree
+    /// node should carry one. Returns an empty vector if `parent`
+    /// has no children.
+    pub fn children(&self, parent: Entity) -> Vec<Entity> {
+        self.children_with_keys(parent)
+            .into_iter()
+            .map(|(e, _)| e)
+            .collect()
+    }
+
+    /// Get all children with their order keys, sorted ascending.
+    pub fn children_with_keys(&self, parent: Entity) -> Vec<(Entity, OrderKey)> {
+        let Ok(children) = self.children_q.get(parent) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(Entity, OrderKey)> = children
+            .iter()
+            .filter_map(|child| {
+                self.order_key_q
+                    .get(child)
+                    .ok()
+                    .map(|k| (child, k.clone()))
+            })
+            .collect();
+        out.sort_by(|(_, a), (_, b)| a.cmp(b));
+        out
+    }
+
+    /// Find all roots (tree-participating entities with no parent).
+    ///
+    /// A *tree-participating entity* is one that either has children
+    /// or has a parent. Pure standalone entities (no `Children`, no
+    /// `ChildOf`) aren't considered part of any tree and aren't roots.
+    pub fn roots(&self) -> Vec<Entity> {
+        // Anything with `Children` but not `ChildOf` is a root.
+        self.has_children_q
+            .iter()
+            .filter(|e| self.child_of_q.get(*e).is_err())
+            .collect()
+    }
+
+    /// Depth of `node` (distance from nearest root). 0 for roots.
+    pub fn depth(&self, mut node: Entity) -> usize {
+        let mut depth = 0;
+        while let Some(parent) = self.parent(node) {
+            depth += 1;
+            node = parent;
+        }
+        depth
+    }
+
+    /// Path from `node` to its root: `[node, parent, grandparent, ..., root]`.
+    pub fn path_to_root(&self, mut node: Entity) -> Vec<Entity> {
+        let mut path = vec![node];
+        while let Some(parent) = self.parent(node) {
+            path.push(parent);
+            node = parent;
+        }
+        path
+    }
+
+    pub fn is_root(&self, node: Entity) -> bool {
+        self.parent(node).is_none()
+    }
+
+    pub fn is_leaf(&self, node: Entity) -> bool {
+        self.children_q
+            .get(node)
+            .map(|c| c.is_empty())
+            .unwrap_or(true)
+    }
+
+    /// Total count of entities participating in any tree.
+    pub fn node_count(&self) -> usize {
+        // Parents ∪ children. Parents = has_children; children = has ChildOf.
+        // Root-only counts via has_children (roots have children to be
+        // tree-participating). Leaf counts via parents_q.
+        let mut seen = std::collections::HashSet::new();
+        for e in self.parents_q.iter() {
+            seen.insert(e);
+        }
+        for e in self.has_children_q.iter() {
+            seen.insert(e);
+        }
+        seen.len()
+    }
+
+    /// Maximum depth across all tree-participating entities.
+    pub fn max_depth(&self) -> usize {
+        self.parents_q
+            .iter()
+            .chain(self.has_children_q.iter())
+            .map(|e| self.depth(e))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Pre-order DFS over the subtree rooted at `root`, yielding
+    /// `(entity, depth)` for each visited entity. `depth` is relative
+    /// to `root` (i.e. `root` itself yields depth `0`). Children are
+    /// visited in `OrderKey` order, so the traversal is deterministic
+    /// across runs given the same tree.
+    pub fn walk_dfs_with_depth(&self, root: Entity) -> impl Iterator<Item = (Entity, usize)> {
+        let mut out: Vec<(Entity, usize)> = Vec::new();
+        let mut stack: Vec<(Entity, usize)> = vec![(root, 0)];
+        while let Some((entity, depth)) = stack.pop() {
+            out.push((entity, depth));
+            // Push children in reverse so the next pop yields the first child.
+            for child in self.children(entity).into_iter().rev() {
+                stack.push((child, depth + 1));
+            }
+        }
+        out.into_iter()
+    }
+}
+
+// ============================================================================
+// GraphTraverse impl — successors = ordered children, predecessors = parent
+// ============================================================================
+//
+// Lets `TreeQuery` act as the substrate for `crate::traverse` closure-
+// driven walks (`bfs_walk` / `dfs_walk` with `Step`) — what the agent-
+// facing `TraversalQuery` runner needs.
+
+impl<F> GraphTraverse for TreeQuery<'_, '_, F>
+where
+    F: QueryFilter + 'static,
+{
+    fn successors(&self, node: Entity) -> impl Iterator<Item = Entity> + '_ {
+        self.children(node).into_iter()
+    }
+
+    fn predecessors(&self, node: Entity) -> impl Iterator<Item = Entity> + '_ {
+        self.parent(node).into_iter()
+    }
+}
+
+// ============================================================================
+// TreePlugin — consumes tree-shaped GraphCommand variants
+// ============================================================================
+
 /// Plugin that consumes tree-shaped [`GraphCommand`] variants
 /// (`InsertChild`, `Reparent`, `MoveSibling`) and applies them as ECS
 /// mutations.
@@ -132,23 +335,14 @@ pub struct TreePlugin;
 
 impl Plugin for TreePlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<TreeEdge>()
-            .register_type::<TreeParent>()
-            .register_type::<OrderKey>()
-            .add_systems(
-                Update,
-                apply_tree_commands.in_set(GraphSystemSet::CommandApplication),
-            );
+        app.register_type::<OrderKey>().add_systems(
+            Update,
+            apply_tree_commands.in_set(GraphSystemSet::CommandApplication),
+        );
     }
 }
 
-fn apply_tree_commands(
-    mut commands: Commands,
-    mut reader: MessageReader<GraphCommand>,
-    incoming: Query<&IncomingEdges>,
-    tree_edges: Query<&TreeEdge>,
-    edge_endpoints: Query<(&EdgeFrom, &EdgeTo)>,
-) {
+fn apply_tree_commands(mut commands: Commands, mut reader: MessageReader<GraphCommand>) {
     for cmd in reader.read() {
         match cmd {
             GraphCommand::InsertChild {
@@ -156,19 +350,19 @@ fn apply_tree_commands(
                 child,
                 position,
             } => {
-                spawn_tree_edge(&mut commands, *parent, *child, position.clone());
+                commands.entity(*child).insert(position.clone());
+                commands.entity(*parent).add_child(*child);
             }
             GraphCommand::Reparent {
                 child,
                 new_parent,
                 position,
             } => {
-                if let Some(existing) =
-                    find_parent_edge(*child, &incoming, &tree_edges, &edge_endpoints)
-                {
-                    commands.entity(existing).despawn();
-                }
-                spawn_tree_edge(&mut commands, *new_parent, *child, position.clone());
+                // `add_child` re-parents: removes the old `ChildOf`
+                // from the child (and the entry in the old parent's
+                // `Children`) and inserts the new one.
+                commands.entity(*child).insert(position.clone());
+                commands.entity(*new_parent).add_child(*child);
             }
             GraphCommand::MoveSibling { child, position } => {
                 commands.entity(*child).insert(position.clone());
@@ -176,56 +370,6 @@ fn apply_tree_commands(
             _ => {}
         }
     }
-}
-
-fn spawn_tree_edge(commands: &mut Commands, parent: Entity, child: Entity, position: OrderKey) {
-    commands
-        .entity(child)
-        .insert((position, TreeParent(Some(parent))));
-    commands
-        .entity(parent)
-        .with_related_entities::<EdgeFrom>(|rel| {
-            rel.spawn((EdgeTo(child), TreeEdge));
-        });
-}
-
-fn find_parent_edge(
-    child: Entity,
-    incoming: &Query<&IncomingEdges>,
-    tree_edges: &Query<&TreeEdge>,
-    edge_endpoints: &Query<(&EdgeFrom, &EdgeTo)>,
-) -> Option<Entity> {
-    let inc = incoming.get(child).ok()?;
-    inc.iter().find(|&edge| {
-        tree_edges.get(edge).is_ok() && edge_endpoints.get(edge).is_ok()
-    })
-}
-
-/// Return `parent`'s direct children in ascending [`OrderKey`] order.
-///
-/// Filters the parent's outgoing edges to those marked [`TreeEdge`] and
-/// reads each child's `OrderKey` to sort siblings.
-pub fn ordered_children(
-    parent: Entity,
-    outgoing_index: &Query<&OutgoingEdges>,
-    tree_edges: &Query<&TreeEdge>,
-    edge_endpoints: &Query<(&EdgeFrom, &EdgeTo)>,
-    order_keys: &Query<&OrderKey>,
-) -> Vec<(Entity, OrderKey)> {
-    let Ok(out) = outgoing_index.get(parent) else {
-        return Vec::new();
-    };
-    let mut children: Vec<(Entity, OrderKey)> = out
-        .iter()
-        .filter_map(|edge| {
-            tree_edges.get(edge).ok()?;
-            let (_, edge_to) = edge_endpoints.get(edge).ok()?;
-            let key = order_keys.get(edge_to.0).ok()?;
-            Some((edge_to.0, key.clone()))
-        })
-        .collect();
-    children.sort_by(|(_, a), (_, b)| a.cmp(b));
-    children
 }
 
 #[cfg(test)]

@@ -23,9 +23,15 @@ use bevy::prelude::*;
 use kyoso_crdt::{CrdtId, EmptySchema};
 use kyoso_graph::components::{EdgeFrom, EdgeTo};
 use kyoso_graph::ecs_view::EcsGraphView;
-use kyoso_graph::tree::TreeParent;
 use kyoso_graph_crdt::{GraphBackend, would_create_cycle};
 use proptest::prelude::*;
+
+/// Marker for entities that participate in this test's graph. Pairs
+/// with `EcsGraphView<TestNode>` to give the view a definition of
+/// "what counts as a node". Real apps use their domain marker
+/// (e.g. `kyoso_core::SceneNode`).
+#[derive(Component, Default, Debug, Clone, Copy)]
+struct TestNode;
 
 /// A deterministic op stream that builds a random topology. Kept
 /// abstract (indices instead of `CrdtId`s) so we can drive both
@@ -106,10 +112,10 @@ fn apply_to_crdt(ops: &[AbstractOp]) -> (GraphBackend<EmptySchema>, Vec<CrdtId>)
 /// `CrdtId → Entity` map so the cross-check can translate ids.
 ///
 /// Only live nodes and live edges land in the world. Tree parents are
-/// translated via the same map; if a parent id maps to nothing (it
-/// was tombstoned), the child becomes a root (`TreeParent(None)`).
-/// That matches the CRDT side's `tree_parent` semantics
-/// (`topology.tree_parent` returns `None` for tombstoned parents).
+/// translated via `ChildOf`; if a parent id maps to nothing (it was
+/// tombstoned), the child remains a root (no `ChildOf`). That matches
+/// the CRDT side's `tree_parent` semantics (`topology.tree_parent`
+/// returns `None` for tombstoned parents).
 fn project_to_ecs(
     backend: &GraphBackend<EmptySchema>,
 ) -> (World, HashMap<CrdtId, Entity>, HashMap<Entity, CrdtId>) {
@@ -117,16 +123,18 @@ fn project_to_ecs(
     let topology = backend.backend().topology();
     let mut id_to_entity: HashMap<CrdtId, Entity> = HashMap::new();
     let mut entity_to_id: HashMap<Entity, CrdtId> = HashMap::new();
-    // Pass 1: spawn every live node with `TreeParent(None)` as a
-    // placeholder. We need the entity for every live id before we can
-    // set parents, because a child can be created before its parent
-    // in the order we iterate `live_node_ids`.
+    // Pass 1: spawn every live node carrying the `TestNode` marker.
+    // The marker is the "is a graph node" signal that `EcsGraphView`
+    // queries against — we need the entity for every live id before
+    // we can set parents, because a child can be created before its
+    // parent in the order we iterate `live_node_ids`.
     for id in topology.live_node_ids() {
-        let entity = world.spawn(TreeParent(None)).id();
+        let entity = world.spawn(TestNode).id();
         id_to_entity.insert(id, entity);
         entity_to_id.insert(entity, id);
     }
-    // Pass 2: stamp the real `TreeParent` on each node.
+    // Pass 2: stamp `ChildOf` on each non-root node. Roots have no
+    // `ChildOf` component at all.
     for id in topology.live_node_ids() {
         let Some(parent_id) = topology.tree_parent(id) else {
             continue;
@@ -135,9 +143,7 @@ fn project_to_ecs(
             continue;
         };
         let entity = id_to_entity[&id];
-        world
-            .entity_mut(entity)
-            .insert(TreeParent(Some(parent_entity)));
+        world.entity_mut(entity).insert(ChildOf(parent_entity));
     }
     // Pass 3: spawn edge entities. Each edge is its own entity
     // carrying `EdgeFrom` / `EdgeTo` (Bevy auto-maintains the
@@ -164,12 +170,12 @@ fn project_to_ecs(
 /// result of `f`.
 fn with_ecs_view<R: Send + Sync + 'static>(
     world: &mut World,
-    f: impl FnOnce(&EcsGraphView) -> R + Send + Sync + 'static,
+    f: impl FnOnce(&EcsGraphView<TestNode>) -> R + Send + Sync + 'static,
 ) -> R {
     let (sender, receiver) = std::sync::mpsc::channel();
     let f_cell = std::sync::Mutex::new(Some(f));
     let mut sys = bevy::ecs::system::IntoSystem::into_system(
-        move |view: EcsGraphView| {
+        move |view: EcsGraphView<TestNode>| {
             let f = f_cell.lock().unwrap().take().expect("f consumed once");
             let result = f(&view);
             sender.send(result).expect("channel send");

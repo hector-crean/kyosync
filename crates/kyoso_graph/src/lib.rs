@@ -4,23 +4,20 @@ pub mod components;
 pub mod cost;
 pub mod descriptor;
 pub mod ecs_view;
-pub mod edge_taxonomy;
 pub mod pattern;
 pub mod queries;
 pub mod scene;
-pub mod solver;
 pub mod subgraph;
-pub mod transaction;
+pub mod traversal;
 pub mod traverse;
 pub mod tree;
+pub mod variant;
 
 pub use commands::*;
 pub use components::*;
 pub use ecs_view::EcsGraphView;
 pub use queries::*;
-pub use scene::{for_each_edge, for_each_node, Materialize, MaterializeEdge};
-pub use solver::*;
-pub use transaction::*;
+pub use scene::Scene;
 pub use cost::{Cost, CostHint};
 pub use pattern::{Direction, PEdge, PNode, Pattern, PatternBuilder};
 pub use subgraph::{Match, SubgraphMatches};
@@ -29,7 +26,8 @@ pub use traverse::{
     EdgeDfsIter, GraphNodes, GraphTraverse, GraphTraverseEdges, OrderedBfsIter, OrderedDfsIter,
     OrderedTraverse, Reverse, Step, TraversalNode,
 };
-pub use tree::{OrderKey, TreeEdge, TreeParent, TreePlugin};
+pub use tree::{OrderKey, TreePlugin, TreeQuery};
+pub use variant::{EdgeVariant, NodeVariant, NodeVariants};
 
 use bevy::prelude::*;
 use std::marker::PhantomData;
@@ -48,14 +46,14 @@ use std::marker::PhantomData;
 /// the edge slots.
 ///
 /// ```ignore
-/// impl Graph for FigmaNode {
+/// impl Graph for SceneNode {
 ///     // Nodes
-///     type NodeMarker        = FigmaNode;
-///     type Node              = kyoso_figma::Node;
-///     type NodeData          = kyoso_figma::AnyNodeQueryData;
-///     type NodeDiscriminator = kyoso_figma::NodeKind;
+///     type NodeMarker        = SceneNode;
+///     type Node              = kyoso_core::Node;
+///     type NodeData          = kyoso_core::AnyNodeQueryData;
+///     type NodeDiscriminator = kyoso_core::NodeKind;
 ///     // Edges (no variants yet)
-///     type EdgeMarker        = FigmaEdge;
+///     type EdgeMarker        = SceneEdge;
 ///     type Edge              = ();
 ///     type EdgeData          = ();
 ///     type EdgeDiscriminator = ();
@@ -65,6 +63,11 @@ use std::marker::PhantomData;
 /// Per-variant typing lives in [`NodeVariant`] / [`EdgeVariant`];
 /// per-graph traversal lives in [`Materialize`](crate::scene::Materialize).
 /// This trait is the binding point between them.
+///
+/// Implementors also pin their **variant set** as a tuple in
+/// [`Variants`](Self::Variants), so [`NodeVariants::try_materialize`]
+/// can dispatch over the closed family without per-call match arms.
+/// `()` works as the empty tuple when no typed variants exist yet.
 pub trait Graph: 'static + Send + Sync {
     // ---- Nodes ----
     /// Marker `Component` identifying "this entity is a node of this graph".
@@ -79,6 +82,11 @@ pub trait Graph: 'static + Send + Sync {
     /// Per-node-variant discriminator (e.g. an enum tag). `()` for
     /// single-variant graphs.
     type NodeDiscriminator: Copy + Eq + Send + Sync + 'static;
+    /// Tuple of node variants belonging to this graph, in dispatch
+    /// order. E.g. `type Variants = (Frame, Rectangle, Text)`. The
+    /// matching [`NodeVariants`] tuple impl (arity 1..=8) drives the
+    /// closed-sum dispatch used by agent-facing typed traversal.
+    type Variants: NodeVariants<Graph = Self>;
 
     // ---- Edges ----
     /// Marker `Component` for "this entity is an edge of this graph".
@@ -91,73 +99,6 @@ pub trait Graph: 'static + Send + Sync {
     type EdgeData: bevy::ecs::query::QueryData;
     /// Per-edge-variant discriminator. `()` if not typed.
     type EdgeDiscriminator: Copy + Eq + Send + Sync + 'static;
-}
-
-/// A typed *node* variant within a [`Graph`]. The implementing type **is**
-/// the variant's marker `Component` (`Self: Component`), eliminating a
-/// separate `type Marker` slot.
-///
-/// ```ignore
-/// impl NodeVariant for Frame {
-///     type Graph = FigmaNode;
-///     type Data  = FrameData;
-///     type Query = FrameQueryData;
-///     const KIND: NodeKind = NodeKind::Frame;
-///     fn wrap(data: FrameData) -> Node { Node::Frame(data) }
-///     fn materialize(item: ROQueryItem<'_, '_, FrameQueryData>) -> FrameData { /* clones */ }
-/// }
-/// ```
-pub trait NodeVariant: Component + 'static {
-    type Graph: Graph;
-    type Data: bevy::prelude::Bundle
-        + serde::Serialize
-        + serde::de::DeserializeOwned
-        + Default
-        + Clone;
-    type Query: bevy::ecs::query::QueryData;
-    const KIND: <Self::Graph as Graph>::NodeDiscriminator;
-    fn wrap(data: Self::Data) -> <Self::Graph as Graph>::Node;
-    fn materialize(item: bevy::ecs::query::ROQueryItem<'_, '_, Self::Query>) -> Self::Data;
-}
-
-/// A typed *edge* variant within a [`Graph`]. Mirror of [`NodeVariant`].
-/// The implementing type is the variant's edge marker `Component`.
-///
-/// No Figma impls exist today — `FigmaEdge` is a structural marker with
-/// no variants yet. The trait shape is here so future typed-edge work
-/// (e.g. reference edges → `EdgeCategory::{InstanceOf, PrototypeLink, …}`)
-/// can land without trait redesign.
-pub trait EdgeVariant: Component + 'static {
-    type Graph: Graph;
-    type Data: bevy::prelude::Bundle
-        + serde::Serialize
-        + serde::de::DeserializeOwned
-        + Default
-        + Clone;
-    type Query: bevy::ecs::query::QueryData;
-    const KIND: <Self::Graph as Graph>::EdgeDiscriminator;
-    fn wrap(data: Self::Data) -> <Self::Graph as Graph>::Edge;
-    fn materialize(item: bevy::ecs::query::ROQueryItem<'_, '_, Self::Query>) -> Self::Data;
-}
-
-/// Change set tracking the origin of a node-level change.
-///
-/// The [`source`](NodeChangeSet::source) field records the origin of the
-/// change (user, solver, propagation, remote peer), enabling downstream
-/// systems to filter and avoid feedback loops. Domain-specific change
-/// flags are the consumer's responsibility.
-#[derive(Clone, Debug, Reflect, Default, serde::Serialize, serde::Deserialize)]
-pub struct NodeChangeSet {
-    pub source: ChangeSource,
-}
-
-/// Change set tracking the origin of an edge-level change.
-///
-/// See [`NodeChangeSet`] for details on the [`source`](EdgeChangeSet::source)
-/// field.
-#[derive(Clone, Debug, Reflect, Default, serde::Serialize, serde::Deserialize)]
-pub struct EdgeChangeSet {
-    pub source: ChangeSource,
 }
 
 /// Type of graph propagation event
@@ -205,13 +146,11 @@ pub enum GraphMessage {
     NodeChanged {
         entity: Entity,
         affected_neighbors: Vec<Entity>,
-        changes: NodeChangeSet,
     },
     EdgeChanged {
         entity: Entity,
         from: Entity,
         to: Entity,
-        changes: EdgeChangeSet,
     },
 
     /// A node moved within the tree — either reparented (changed
@@ -226,7 +165,6 @@ pub enum GraphMessage {
         entity: Entity,
         new_parent: Option<Entity>,
         position: tree::OrderKey,
-        changes: NodeChangeSet,
     },
 
     PropagationTriggered {
@@ -316,32 +254,21 @@ impl Default for GraphEventPropagationConfig {
 /// Every set is ordered linearly — each runs strictly after the previous:
 ///
 /// ```text
-/// TransactionRecording → CommandApplication → ChangeDetection
-///   → EventPropagation → Solving → SnapshotCreation
+/// CommandApplication → ChangeDetection → EventPropagation
 /// ```
 ///
-/// [`GraphManagerPlugin`] configures this chain and populates
-/// `CommandApplication`, `ChangeDetection`, and `EventPropagation`.
-/// [`crate::tree::TreePlugin`] adds to `CommandApplication`;
-/// [`crate::transaction::TransactionPlugin`] adds to
-/// `TransactionRecording` + `SnapshotCreation`; solver plugins land in
-/// `Solving`. There are no "downstream consumer" slots — apps schedule
-/// their own systems after this chain by ordering against
-/// `SnapshotCreation` as needed.
+/// [`GraphManagerPlugin`] configures this chain and populates all
+/// three sets. [`crate::tree::TreePlugin`] adds to `CommandApplication`.
+/// Apps schedule their own systems after this chain by ordering against
+/// `EventPropagation` as needed.
 #[derive(SystemSet, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum GraphSystemSet {
-    /// External commands arrive (from MCP, network, UI, etc.).
-    TransactionRecording,
     /// Intent-based commands are applied as ECS mutations.
     CommandApplication,
     /// Automatic detection of Added/Changed/Removed components.
     ChangeDetection,
     /// Graph-aware propagation of changes through topology.
     EventPropagation,
-    /// Solver/constraint evaluation (see [`SolverSet`]).
-    Solving,
-    /// State captured for undo/redo and network replication.
-    SnapshotCreation,
 }
 
 /// Graph manager plugin parameterised over the **node marker** and
@@ -352,7 +279,7 @@ pub enum GraphSystemSet {
 /// The plugin only needs markers, not the full [`Graph`] trait — that
 /// kicks in for typed traversal in the consumer crate. Pass any
 /// `Component` directly:
-/// `GraphManagerPlugin::<FigmaNode, FigmaEdge>::new()`.
+/// `GraphManagerPlugin::<SceneNode, SceneEdge>::new()`.
 ///
 /// This plugin wires up:
 /// - Change detection for nodes and edges
@@ -396,10 +323,7 @@ where
 {
     fn build(&self, app: &mut App) {
         app.register_type::<GraphMessage>()
-            .register_type::<NodeChangeSet>()
-            .register_type::<EdgeChangeSet>()
             .register_type::<PropagationType>()
-            .register_type::<ChangeSource>()
             .add_message::<GraphMessage>()
             .register_type::<GraphCommand>()
             .add_message::<GraphCommand>()
@@ -408,12 +332,9 @@ where
             .configure_sets(
                 Update,
                 (
-                    GraphSystemSet::TransactionRecording,
                     GraphSystemSet::CommandApplication,
                     GraphSystemSet::ChangeDetection,
                     GraphSystemSet::EventPropagation,
-                    GraphSystemSet::Solving,
-                    GraphSystemSet::SnapshotCreation,
                 )
                     .chain(),
             )
@@ -455,31 +376,8 @@ fn consume_graph_commands<NM: Component, EM: Component>(
     mut commands: Commands,
     mut reader: MessageReader<GraphCommand>,
     graph_query: GraphQuery<'_, '_, &NM, &EM>,
-    pending: Option<ResMut<PendingTransaction>>,
 ) {
-    let mut pending = pending;
-
     for cmd in reader.read() {
-        let inverse = match cmd {
-            GraphCommand::Connect { from, to } => Some(GraphCommand::Disconnect {
-                from: *from,
-                to: *to,
-            }),
-            GraphCommand::Disconnect { from, to } => Some(GraphCommand::Connect {
-                from: *from,
-                to: *to,
-            }),
-            GraphCommand::RemoveNode { .. }
-            | GraphCommand::RemoveEdge { .. }
-            | GraphCommand::InsertChild { .. }
-            | GraphCommand::Reparent { .. }
-            | GraphCommand::MoveSibling { .. } => None,
-        };
-
-        if let Some(ref mut pending) = pending {
-            pending.record(cmd.clone(), inverse);
-        }
-
         match cmd {
             GraphCommand::Connect { from, to } => {
                 spawn_edge(&mut commands, *from, *to);
@@ -576,35 +474,32 @@ fn detect_topology_changes(
     }
 }
 
-/// Emit [`GraphMessage::TreePositionChanged`] when a node's
-/// [`tree::TreeParent`] or [`tree::OrderKey`] changes — i.e. when the
-/// node has been reparented or reordered among its siblings.
+/// Emit [`GraphMessage::TreePositionChanged`] when a node's `ChildOf`
+/// or [`tree::OrderKey`] changes — i.e. when the node has been
+/// reparented or reordered among its siblings.
 ///
 /// Fires uniformly for:
 /// - Local edits via [`GraphCommand::Reparent`] /
 ///   [`GraphCommand::MoveSibling`] / [`GraphCommand::InsertChild`].
-/// - Remote-applied CRDT `Move` ops, where
-///   `kyoso_graph_sync::plugin::project_move` writes a new
-///   `TreeParent` / `OrderKey` onto the affected entity.
+/// - Remote-applied CRDT `Move` ops, applied via `apply_tree_commands`.
+///
+/// `new_parent: None` indicates the node is a root (no `ChildOf`).
 ///
 /// The propagation layer ([`read_propagation_messages`]) treats this
 /// like [`GraphMessage::NodeChanged`], so a tree move triggers the
-/// same downstream propagation as any other node update — meaning
-/// solvers and consumers don't have to special-case where the move
-/// originated.
+/// same downstream propagation as any other node update.
 fn detect_tree_position_changes(
     mut graph_messages: MessageWriter<GraphMessage>,
     moved: Query<
-        (Entity, &tree::TreeParent, &tree::OrderKey),
-        Or<(Changed<tree::TreeParent>, Changed<tree::OrderKey>)>,
+        (Entity, Option<&ChildOf>, &tree::OrderKey),
+        Or<(Changed<ChildOf>, Changed<tree::OrderKey>)>,
     >,
 ) {
-    for (entity, parent, key) in moved.iter() {
+    for (entity, child_of, key) in moved.iter() {
         graph_messages.write(GraphMessage::TreePositionChanged {
             entity,
-            new_parent: parent.0,
+            new_parent: child_of.map(|c| c.0),
             position: key.clone(),
-            changes: NodeChangeSet::default(),
         });
     }
 }
@@ -635,7 +530,6 @@ fn read_propagation_messages<NM: Component, EM: Component>(
             GraphMessage::NodeChanged {
                 entity,
                 affected_neighbors: _,
-                changes: _,
             }
             | GraphMessage::NodeAdded {
                 entity,
@@ -645,7 +539,6 @@ fn read_propagation_messages<NM: Component, EM: Component>(
                 entity,
                 new_parent: _,
                 position: _,
-                changes: _,
             } => {
                 if config.propagate_node_changes {
                     let affected_nodes = match config.default_node_propagation {
@@ -673,7 +566,6 @@ fn read_propagation_messages<NM: Component, EM: Component>(
                 entity,
                 from,
                 to,
-                changes: _,
             } => {
                 if config.propagate_edge_changes {
                     let affected_nodes = match config.default_edge_propagation {

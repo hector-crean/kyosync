@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
-use kyoso_graph::tree::{OrderKey, TreeEdge, TreePlugin};
+use kyoso_graph::tree::{OrderKey, TreePlugin};
 use kyoso_graph::{GraphCommand, GraphManagerPlugin, GraphMessage};
 use kyoso_graph_sync::{ClientSyncEngine, EntityCrdtIndex};
 use kyoso_server::{AppState, app};
@@ -272,7 +272,10 @@ async fn graph_command_insert_child_propagates() {
 }
 
 fn count_tree_edges(app: &mut App) -> usize {
-    let mut q = app.world_mut().query::<&TreeEdge>();
+    // With Bevy's hierarchy migration, "tree edges" are no longer
+    // edge entities — they're per-child `ChildOf` components. Count
+    // entities carrying `ChildOf` (i.e. non-root tree nodes).
+    let mut q = app.world_mut().query::<&ChildOf>();
     q.iter(app.world()).count()
 }
 
@@ -445,7 +448,6 @@ fn collect_tree_moves(
             entity,
             new_parent,
             position,
-            changes: _,
         } = msg
         {
             log.0.push((*entity, *new_parent, position.0.clone()));

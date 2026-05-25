@@ -7,7 +7,12 @@
 //! - [`crate::components::OutgoingEdges`] /
 //!   [`crate::components::IncomingEdges`] — auto-maintained reverse
 //!   indices via Bevy's relationship machinery.
-//! - [`crate::tree::TreeParent`] — node's parent in the tree.
+//! - `ChildOf` (Bevy native) — node's parent in the tree. Roots have
+//!   no `ChildOf` component.
+//! - A caller-supplied node marker `NM` — identifies which entities
+//!   are "nodes" of this view's graph. Necessary because roots don't
+//!   have any structural marker on their own (no `ChildOf`, possibly
+//!   no `Children`), so we need a separate signal.
 //!
 //! "Live" on this side means "the entity exists and carries the
 //! marker component"; despawned entities aren't queryable, which
@@ -17,30 +22,27 @@
 //! `&view` to the generic algorithms in
 //! [`kyoso_graph_crdt::view`] — cycle detection, reachability,
 //! connected component. The point is that those algorithms are
-//! identical to the ones running headless on the server, which is
-//! what makes the cross-store cycle-check test (see
-//! `tests/cross_view.rs`) meaningful.
+//! identical to the ones running headless on the server.
 
 use bevy::ecs::{query::QueryData, system::SystemParam};
 use bevy::prelude::*;
 use kyoso_graph_crdt::view::GraphView;
 
 use crate::components::{EdgeFrom, EdgeTo, IncomingEdges, OutgoingEdges};
-use crate::tree::TreeParent;
 
 /// `SystemParam` that exposes the ECS graph store through
-/// [`GraphView`]. The view borrows the world for the system's
-/// duration; algorithms run synchronously inside the system body.
+/// [`GraphView`]. Parameterised over a node marker `NM` so the
+/// "what entities count as nodes" question is settled at the call site.
 ///
 /// Unlike [`crate::queries::GraphQuery`] this view is intentionally
-/// untyped — no `Node` / `Edge` generic — because the algorithms
-/// behind [`GraphView`] don't need to peek at domain components. If
-/// you need typed access alongside the view, hold both as separate
-/// `SystemParam`s in the same system.
+/// untyped on the edge side — no `Edge` generic — because the
+/// algorithms behind [`GraphView`] don't need to peek at domain
+/// components. If you need typed access alongside the view, hold both
+/// as separate `SystemParam`s in the same system.
 #[derive(SystemParam)]
-pub struct EcsGraphView<'w, 's> {
-    /// Per-edge `(EdgeFrom, EdgeTo)`. The query filter is empty so
-    /// the view sees every edge entity in the world; `outgoing` /
+pub struct EcsGraphView<'w, 's, NM: Component> {
+    /// Per-edge `(EdgeFrom, EdgeTo)`. The query filter is empty so the
+    /// view sees every edge entity in the world; `outgoing` /
     /// `incoming` filter out edges whose endpoints are despawned.
     edges: Query<'w, 's, EdgeEndpointQuery>,
     /// `OutgoingEdges` is auto-attached by Bevy's relationship
@@ -48,13 +50,13 @@ pub struct EcsGraphView<'w, 's> {
     outgoing_index: Query<'w, 's, &'static OutgoingEdges>,
     /// Mirror of `outgoing_index` for incoming.
     incoming_index: Query<'w, 's, &'static IncomingEdges>,
-    /// Per-node `TreeParent`. Missing component → root (no parent).
-    parents: Query<'w, 's, &'static TreeParent>,
-    /// All entities that have a `TreeParent`. Used by `live_nodes()`
-    /// — we treat any entity with this component as a node, since
-    /// the structural sync layer attaches `TreeParent` to every
-    /// replicated node entity at spawn time.
-    all_nodes: Query<'w, 's, Entity, With<TreeParent>>,
+    /// Per-node parent. Missing component → root.
+    parents: Query<'w, 's, &'static ChildOf>,
+    /// All entities carrying the node marker `NM`. The caller pins
+    /// `NM` at the use site (e.g. `EcsGraphView<SceneNode>` for the
+    /// kyoso scene tree, `EcsGraphView<TestNode>` for the cross-view
+    /// regression test).
+    all_nodes: Query<'w, 's, Entity, With<NM>>,
 }
 
 /// Endpoint data for one edge entity. Pulled out as `QueryData` so
@@ -66,19 +68,15 @@ struct EdgeEndpointQuery {
     to: &'static EdgeTo,
 }
 
-impl<'w, 's> GraphView for EcsGraphView<'w, 's> {
+impl<'w, 's, NM: Component> GraphView for EcsGraphView<'w, 's, NM> {
     type NodeId = Entity;
     type EdgeId = Entity;
 
     fn is_live_node(&self, id: Self::NodeId) -> bool {
-        // A node is "live" iff it has `TreeParent`. We use `parents`
-        // (which queries `&TreeParent`) instead of a dedicated marker
-        // because the structural sync layer attaches `TreeParent` on
-        // every replicated node — see
-        // `kyoso_graph_sync::plugin::project_op` and
-        // `project_snapshot`. An entity that's been despawned will
-        // simply fail `get`, which is the correct "not live" answer.
-        self.parents.get(id).is_ok()
+        // A node is "live" iff it has the `NM` marker. An entity
+        // that's been despawned will simply fail `get`, which is the
+        // correct "not live" answer.
+        self.all_nodes.get(id).is_ok()
     }
 
     fn is_live_edge(&self, id: Self::EdgeId) -> bool {
@@ -86,7 +84,7 @@ impl<'w, 's> GraphView for EcsGraphView<'w, 's> {
     }
 
     fn tree_parent(&self, id: Self::NodeId) -> Option<Self::NodeId> {
-        self.parents.get(id).ok().and_then(|p| p.0)
+        self.parents.get(id).ok().map(|c| c.0)
     }
 
     fn outgoing(

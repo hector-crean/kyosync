@@ -6,10 +6,9 @@
 //! - Graph ML (GNN training)
 
 use bevy::prelude::*;
-use bevy::ecs::query::{QueryData, QueryFilter};
 use serde::{Deserialize, Serialize};
 
-use crate::scene::SceneGraph;
+use crate::tree::TreeQuery;
 
 // ============================================================================
 // Core Descriptor Types (for LLM consumption)
@@ -75,24 +74,18 @@ impl SceneGraphDescriptor {
     /// **Note:** Component data extraction via reflection is not yet implemented.
     /// For now, `include_data` is accepted but ignored. This will be added in a
     /// future iteration.
-    pub fn from_scene_graph<N, E, NF, EF>(
-        scene: &SceneGraph<N, E, NF, EF>,
+    pub fn from_scene_graph(
+        tree: &TreeQuery,
         _include_data: bool, // TODO: implement reflection-based data extraction
-    ) -> Self
-    where
-        N: QueryData + 'static,
-        E: QueryData + 'static,
-        NF: QueryFilter + 'static,
-        EF: QueryFilter + 'static,
-    {
-        let roots = scene.roots();
-        let node_count = scene.node_count();
+    ) -> Self {
+        let roots = tree.roots();
+        let node_count = tree.node_count();
         let root_count = roots.len();
-        let max_depth = scene.max_depth();
+        let max_depth = tree.max_depth();
 
         let root_descriptors: Vec<NodeDescriptor> = roots
             .into_iter()
-            .map(|root| Self::build_node_descriptor(scene, root))
+            .map(|root| Self::build_node_descriptor(tree, root))
             .collect();
 
         SceneGraphDescriptor {
@@ -109,22 +102,13 @@ impl SceneGraphDescriptor {
     }
 
     /// Recursively build a node descriptor with all its children.
-    fn build_node_descriptor<N, E, NF, EF>(
-        scene: &SceneGraph<N, E, NF, EF>,
-        entity: Entity,
-    ) -> NodeDescriptor
-    where
-        N: QueryData + 'static,
-        E: QueryData + 'static,
-        NF: QueryFilter + 'static,
-        EF: QueryFilter + 'static,
-    {
-        let depth = scene.depth(entity);
-        let children_entities = scene.children(entity);
+    fn build_node_descriptor(tree: &TreeQuery, entity: Entity) -> NodeDescriptor {
+        let depth = tree.depth(entity);
+        let children_entities = tree.children(entity);
 
         let children: Vec<NodeDescriptor> = children_entities
             .into_iter()
-            .map(|child| Self::build_node_descriptor(scene, child))
+            .map(|child| Self::build_node_descriptor(tree, child))
             .collect();
 
         NodeDescriptor {

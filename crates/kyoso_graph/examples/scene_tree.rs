@@ -9,8 +9,7 @@
 use bevy::ecs::message::Messages;
 use bevy::prelude::*;
 
-use kyoso_graph::components::{EdgeTo, OutgoingEdges};
-use kyoso_graph::tree::{OrderKey, TreeEdge, TreePlugin};
+use kyoso_graph::tree::{OrderKey, TreePlugin};
 use kyoso_graph::{GraphCommand, GraphManagerPlugin};
 
 // ---------------------------------------------------------------------------
@@ -201,16 +200,14 @@ fn print_tree(world: &World, entity: Entity, depth: usize) {
 
     println!("{indent}{name} <{kind:?}> [key={key}]");
 
-    let Some(out) = world.get::<OutgoingEdges>(entity) else {
+    let Some(children_component) = world.get::<Children>(entity) else {
         return;
     };
-    let mut children: Vec<(Entity, OrderKey)> = out
+    let mut children: Vec<(Entity, OrderKey)> = children_component
         .iter()
-        .filter_map(|edge| {
-            world.get::<TreeEdge>(edge)?;
-            let to = world.get::<EdgeTo>(edge)?;
-            let k = world.get::<OrderKey>(to.0)?.clone();
-            Some((to.0, k))
+        .filter_map(|child| {
+            let k = world.get::<OrderKey>(child)?.clone();
+            Some((child, k))
         })
         .collect();
     children.sort_by(|(_, a), (_, b)| a.cmp(b));
