@@ -1,0 +1,24 @@
+[package]
+name = "kyoso_agent"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Agent-facing read surface over a kyoso scene — tools for traversal, pattern matching, typed reads, and schemaless inspection. Demonstrates the kyoso_core / kyoso_graph agent API end-to-end."
+
+[dependencies]
+kyoso_core       = { workspace = true }
+kyoso_graph      = { workspace = true }
+kyoso_graph_sync = { workspace = true }
+kyoso_crdt       = { workspace = true }
+
+bevy       = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "demo"
+path = "src/bin/demo.rs"
