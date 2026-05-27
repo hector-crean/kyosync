@@ -1,0 +1,1632 @@
+{
+  "$defs": {
+    "Catalog": {
+      "properties": {
+        "kind_counts": {
+          "additionalProperties": false,
+          "properties": {
+            "frame": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rectangle": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "max_depth": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_nodes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total_nodes",
+        "kind_counts",
+        "max_depth"
+      ],
+      "type": "object"
+    },
+    "Change": {
+      "description": "One row in the [`WatchPage`] result. `node` carries the path + cache\nhints; `kind` is the coalesced kind; `change_count` is how many raw\nevents were folded into this row.",
+      "properties": {
+        "change_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/ChangeKind"
+        },
+        "node": {
+          "$ref": "#/$defs/NodeRef"
+        },
+        "node_kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Best-effort `NodeKind` — present when the entity still exists\nat drain time. `None` for `Removed` and for any node the\nresolver can't classify."
+        }
+      },
+      "required": [
+        "node",
+        "kind",
+        "change_count",
+        "generation"
+      ],
+      "type": "object"
+    },
+    "ChangeKind": {
+      "enum": [
+        "Added",
+        "Removed",
+        "Modified",
+        "Moved"
+      ],
+      "type": "string"
+    },
+    "CrdtId": {
+      "description": "Stable global identifier for an element (node, edge, comment, …) or\nfor an individual operation.\n\nTwo-tuple of `(peer, seq)` where `seq` is the peer's local counter.\nOnce minted on a peer, this ID is permanent and shared across all\nreplicas. The encoding is varint-friendly (small peer IDs and dense\ncounters compress well under postcard).",
+      "properties": {
+        "peer": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "peer",
+        "seq"
+      ],
+      "type": "object"
+    },
+    "CreateSpec": {
+      "description": "What to create + where to put it. `parent: None` makes a scene\nroot; `position: None` defaults to `OrderKey(\"a\")` when a parent\nis set (deterministic placement).",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/NewNode"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeTarget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OrderKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "type": "object"
+    },
+    "Cursor": {
+      "description": "Position in the event stream for `watch(since)`.\n\nHybrid model:\n- `generation` — session-local counter bumped on every relevant ECS\n  change. Covers derived/read-only state too.\n- `last_replicated_op` — opaque monotonic identifier from the sync\n  engine, present when the change came through CRDT replication.\n  Lets the agent reason about cross-process ordering with the human\n  operator's edits.\n\n`session` lets the SDK return `buffer_overflow: true` cleanly when a\ncursor from a prior session is presented — the agent re-scans rather\nthan receiving stale-but-plausible deltas.",
+      "properties": {
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_replicated_op": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "generation"
+      ],
+      "type": "object"
+    },
+    "EdgePattern": {
+      "properties": {
+        "direction": {
+          "$ref": "#/$defs/PatternDirection",
+          "default": "Forward"
+        },
+        "from": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "to": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "EdgeRef": {
+      "description": "Agent-facing reference to an edge entity. Edges don't sit in the\ntree, so they don't have a `ScenePath` — they're identified by the\n`(from, to)` NodeRef pair plus the entity bits.",
+      "properties": {
+        "entity": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "from": {
+          "$ref": "#/$defs/NodeRef"
+        },
+        "to": {
+          "$ref": "#/$defs/NodeRef"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "EntityReport": {
+      "description": "What [`SceneAgent::inspect`] returns: the resolved [`NodeRef`],\nthe typed sum-type [`Node`] materialisation (if it matches a known\nvariant), and the schemaless component-name dump.\n\n`entity_bits` is the live `Entity::to_bits()` at the moment of the\ncall — only meaningful when paired with this run's [`SessionId`].\nCross-process callers should ignore it and route work through\n`node` ([`NodeRef`]).",
+      "properties": {
+        "component_names": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "entity_bits": {
+          "description": "Per-session opaque entity handle — `Entity::to_bits()`. `None`\nif the target couldn't be resolved.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "node": {
+          "$ref": "#/$defs/NodeRef"
+        },
+        "variant": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Node"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Typed `Node` materialisation, when the entity carries a known\nkind. `None` for entities with no matching variant."
+        }
+      },
+      "required": [
+        "node",
+        "component_names"
+      ],
+      "type": "object"
+    },
+    "Frame": {
+      "properties": {
+        "clips_content": {
+          "description": "Whether children are clipped to the frame's bounds.\nFigma `Frame` ⇒ `true`; Figma `Group` ⇒ `false`.",
+          "type": "boolean"
+        },
+        "fills": {
+          "description": "Whole-list LWW. Concurrent fill edits on different peers will\nnot compose — last writer wins on the entire list. See\n`paint.rs` for the rationale.",
+          "items": {
+            "$ref": "#/$defs/Paint"
+          },
+          "type": "array"
+        },
+        "layout_mode": {
+          "$ref": "#/$defs/LayoutMode"
+        },
+        "name": {
+          "type": "string"
+        },
+        "stroke_weight": {
+          "format": "float",
+          "type": "number"
+        },
+        "strokes": {
+          "items": {
+            "$ref": "#/$defs/Paint"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "clips_content",
+        "layout_mode",
+        "fills",
+        "strokes",
+        "stroke_weight"
+      ],
+      "type": "object"
+    },
+    "FrameData": {
+      "description": "Owned Frame variant payload + Bevy `Bundle`. Spawn-side mirror of\n[`FrameQueryData`].\n\nThe `#[require(NodeKind = NodeKind::Frame)]` on [`Frame`] auto-inserts\nthe discriminator, so the sync layer's per-component ops produce the\nsame archetype as the local `*Data` spawn path.",
+      "properties": {
+        "frame": {
+          "$ref": "#/$defs/Frame"
+        },
+        "size": {
+          "$ref": "#/$defs/Size"
+        }
+      },
+      "required": [
+        "frame",
+        "size"
+      ],
+      "type": "object"
+    },
+    "GradientStop": {
+      "properties": {
+        "color": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "position": {
+          "description": "`[0.0, 1.0]` along the gradient.",
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "position",
+        "color"
+      ],
+      "type": "object"
+    },
+    "GradientType": {
+      "enum": [
+        "Linear",
+        "Radial",
+        "Angular",
+        "Diamond"
+      ],
+      "type": "string"
+    },
+    "ImageScaleMode": {
+      "enum": [
+        "Fill",
+        "Fit",
+        "Tile",
+        "Stretch"
+      ],
+      "type": "string"
+    },
+    "LayoutMode": {
+      "enum": [
+        "none",
+        "horizontal",
+        "vertical"
+      ],
+      "type": "string"
+    },
+    "MatchRefs": {
+      "description": "NodeRef-shaped projection of a [`Match`] returned by\n[`SceneAgent::match_refs`]. Indices match `PNode.0` / `PEdge.0` so\nthe [`pattern_builder()`](SceneAgent::pattern_builder)-issued\nhandles stay valid as lookups.",
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/EdgeRef"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/NodeRef"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "nodes",
+        "edges"
+      ],
+      "type": "object"
+    },
+    "MoveSpec": {
+      "description": "Move (reparent / reorder) a node. `new_parent: None` promotes to\nscene root.",
+      "properties": {
+        "new_parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeTarget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "position": {
+          "$ref": "#/$defs/OrderKey"
+        },
+        "target": {
+          "$ref": "#/$defs/NodeTarget"
+        }
+      },
+      "required": [
+        "target",
+        "position"
+      ],
+      "type": "object"
+    },
+    "MutateError": {
+      "oneOf": [
+        {
+          "const": "TargetNotFound",
+          "description": "The target couldn't be resolved (path didn't match, entity dead, …).",
+          "type": "string"
+        },
+        {
+          "const": "ParentNotFound",
+          "description": "`parent` / `new_parent` couldn't be resolved.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An `UpdatePatch` field doesn't apply to this entity's variant.\nE.g. `frame_name` on a Text node. Today we silently no-op for\nsuch fields; this variant is reserved for the future \"strict\"\nmode.",
+          "properties": {
+            "VariantMismatch": {
+              "properties": {
+                "expected": {
+                  "$ref": "#/$defs/NodeKind"
+                },
+                "patched": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "expected",
+                "patched"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "VariantMismatch"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "EmptyPatch",
+          "description": "The patch had no fields set.",
+          "type": "string"
+        }
+      ]
+    },
+    "MutateResult": {
+      "description": "Returned from every mutation. `node` is the post-mutation [`NodeRef`]\nfor the affected entity (for [`delete`], it's the *pre-mutation*\nref since the entity no longer exists). `cursor` is the full\npost-mutation [`Cursor`] — pass it directly to\n[`crate::SceneRead::watch`] to observe everything *after* this\nmutation lands.",
+      "properties": {
+        "cursor": {
+          "$ref": "#/$defs/Cursor"
+        },
+        "node": {
+          "$ref": "#/$defs/NodeRef"
+        }
+      },
+      "required": [
+        "node",
+        "cursor"
+      ],
+      "type": "object"
+    },
+    "NavDir": {
+      "oneOf": [
+        {
+          "const": "Out",
+          "description": "Outgoing edges only — successors I point to.",
+          "type": "string"
+        },
+        {
+          "const": "In",
+          "description": "Incoming edges only — predecessors pointing to me.",
+          "type": "string"
+        },
+        {
+          "const": "Both",
+          "description": "Union of Out and In at each hop. Undirected neighborhood.",
+          "type": "string"
+        },
+        {
+          "const": "Downstream",
+          "description": "Transitive closure of `Out`. Ignores `depth_limit` (uses\n`GraphQuery::downstream_nodes`).",
+          "type": "string"
+        },
+        {
+          "const": "Upstream",
+          "description": "Transitive closure of `In`. Ignores `depth_limit`.",
+          "type": "string"
+        },
+        {
+          "const": "Component",
+          "description": "Whole connected component (undirected). Ignores `depth_limit`.",
+          "type": "string"
+        }
+      ]
+    },
+    "NavEdgeFilter": {
+      "oneOf": [
+        {
+          "const": "All",
+          "description": "Tree (ChildOf) + entity-edges (SceneEdge). Default.",
+          "type": "string"
+        },
+        {
+          "const": "TreeOnly",
+          "description": "Only the tree hierarchy. For walking a subtree manually one\nhop at a time. (`walk` is usually better for whole subtrees.)",
+          "type": "string"
+        },
+        {
+          "const": "EntityEdgesOnly",
+          "description": "Only the entity-edge graph — the \"weave\" relations that don't\nlive in the parent-child hierarchy. This is where most\nagent-relevant graph crawls happen.",
+          "type": "string"
+        }
+      ]
+    },
+    "NavOpts": {
+      "properties": {
+        "depth_limit": {
+          "default": null,
+          "description": "Hop depth. `None` defaults to 1 (immediate neighbors only).\nIgnored for `Downstream` / `Upstream` / `Component`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "direction": {
+          "$ref": "#/$defs/NavDir",
+          "default": "Out"
+        },
+        "edges": {
+          "$ref": "#/$defs/NavEdgeFilter",
+          "default": "All"
+        },
+        "kinds": {
+          "default": [],
+          "description": "Filter result rows by kind. Empty = all kinds.",
+          "items": {
+            "$ref": "#/$defs/NodeKind"
+          },
+          "type": "array"
+        },
+        "max_items": {
+          "default": 0,
+          "description": "Cap on row count. 0 = unlimited.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "NewNode": {
+      "description": "The variant data for a new node. Mirrors the variant set in\n[`kyoso_core::Node`] but is *write-shaped* — it carries the full\nbundle the entity will be spawned with.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/FrameData",
+          "properties": {
+            "kind": {
+              "const": "frame",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/RectangleData",
+          "properties": {
+            "kind": {
+              "const": "rectangle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/TextData",
+          "properties": {
+            "kind": {
+              "const": "text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Node": {
+      "description": "The public node taxonomy. Serializes with an internal `\"kind\"` tag\n(`\"frame\"` / `\"rectangle\"` / `\"text\"`) for AI / RPC consumers.\n\nSpawn into the ECS via [`Node::spawn`]. Materialize back via\n[`SceneWorld::read_as`](crate::SceneWorld::read_as) (single-entity)\nor [`SceneWorld::traverse_typed::<SceneNode>`](crate::SceneWorld::traverse_typed)\n(walking) — both go through the\n[`kyoso_graph::variant::NodeVariants`] tuple dispatch.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/FrameData",
+          "properties": {
+            "kind": {
+              "const": "frame",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/RectangleData",
+          "properties": {
+            "kind": {
+              "const": "rectangle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/TextData",
+          "properties": {
+            "kind": {
+              "const": "text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "NodeKind": {
+      "description": "Discriminator tag: which variant of [`Node`](crate::node::Node) does\nthis entity carry? Inserted atomically with the variant's data via\nthe `*Data` bundles (see [`FrameData`](crate::FrameData) etc.)\nso the tag and the data cannot drift apart.",
+      "enum": [
+        "frame",
+        "rectangle",
+        "text"
+      ],
+      "type": "string"
+    },
+    "NodePattern": {
+      "description": "Filters that apply to a single pattern node slot. Applied as a\npost-match step — matches survive only if every bound node passes.",
+      "properties": {
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "description": "Match against Frame's `name` or Text's `content`. Other variants\nalways fail this filter.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "NodeRef": {
+      "description": "Agent-facing reference to a scene node — what tools return and accept.\n\n`path` is canonical; the other fields are cache hints. Resolver\nstrategy (see [`NodeRef::resolve`]):\n\n1. `entity` if `session` matches the current session and the entity\n   still exists in the world.\n2. `crdt_id` via [`EntityCrdtIndex::entity_for_node`].\n3. Walk the `path` from root.",
+      "properties": {
+        "crdt_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CrdtId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set for replicated nodes. Durable across reruns (it's the CRDT\nsite identity), so this is the preferred fast path after `path`."
+        },
+        "entity": {
+          "description": "Per-session cache. `Entity` is encoded via `Entity::to_bits()`\nfor serde compat. Honoured only when `session` matches.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/ScenePath"
+        },
+        "session": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Session this `entity` cache belongs to."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "NodeTarget": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NodeRef"
+        },
+        {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      ],
+      "description": "Input form for tool methods: a raw `Entity` (fast in-process) or a\n[`NodeRef`] (durable). Both are resolved via [`NodeTarget::resolve`].\n\nMost `SceneAgent` methods take `impl Into<NodeTarget>` so callers\ncan pass whichever they have. Returned rows always carry `NodeRef`\n— so a typical loop is `entity_returned_from_query → next call`,\nwith no manual conversion.\n\nWire form: serialized as the inner `NodeRef` (with `entity:` and\n`session:` cache hints when present). The `Entity`-only variant\nserializes as `{\"entity\": <bits>}` — only meaningful in-process,\nwhich is acceptable since cross-process callers always have a\n`NodeRef`."
+    },
+    "OrderKey": {
+      "description": "Per-child fractional ordering key.\n\nStrings sort lexicographically over a printable-ASCII alphabet, so\ninserting between two existing siblings is always possible without\nrenumbering anyone else. See [`OrderKey::between`] for the midpoint\ngenerator.",
+      "type": "string"
+    },
+    "OutlineNode": {
+      "description": "One row in the outline forest. `children` is the recursive structure;\n`elided_children` tells the agent how many descendants the outline\nhid (either because of `depth` or `max_outline_rows`).",
+      "properties": {
+        "child_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "children": {
+          "items": {
+            "$ref": "#/$defs/OutlineNode"
+          },
+          "type": "array"
+        },
+        "depth": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "elided_children": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "node": {
+          "$ref": "#/$defs/NodeRef"
+        },
+        "subtree_cost": {
+          "$ref": "#/$defs/SubtreeCost"
+        }
+      },
+      "required": [
+        "node",
+        "depth",
+        "child_count",
+        "subtree_cost",
+        "elided_children",
+        "children"
+      ],
+      "type": "object"
+    },
+    "Paint": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Solid": {
+              "properties": {
+                "color": {
+                  "description": "sRGB linear with alpha, in `[0.0, 1.0]`.",
+                  "items": {
+                    "format": "float",
+                    "type": "number"
+                  },
+                  "maxItems": 4,
+                  "minItems": 4,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "color"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Solid"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Gradient": {
+              "properties": {
+                "kind": {
+                  "$ref": "#/$defs/GradientType"
+                },
+                "stops": {
+                  "items": {
+                    "$ref": "#/$defs/GradientStop"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "kind",
+                "stops"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Gradient"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Image": {
+              "properties": {
+                "image_ref": {
+                  "description": "Server-resolved image key. The actual image bytes are\nfetched separately (out of the document's CRDT scope).",
+                  "type": "string"
+                },
+                "scale_mode": {
+                  "$ref": "#/$defs/ImageScaleMode"
+                }
+              },
+              "required": [
+                "image_ref",
+                "scale_mode"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Image"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PatternAnchor": {
+      "description": "Pin a specific pattern node slot to a known scene entity.\nAnchored matches start search from this binding.",
+      "properties": {
+        "pattern_node": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target": {
+          "$ref": "#/$defs/NodeTarget"
+        }
+      },
+      "required": [
+        "pattern_node",
+        "target"
+      ],
+      "type": "object"
+    },
+    "PatternDirection": {
+      "oneOf": [
+        {
+          "const": "Forward",
+          "description": "Match a graph edge `bound(from) → bound(to)`.",
+          "type": "string"
+        },
+        {
+          "const": "Backward",
+          "description": "Match a graph edge `bound(to) → bound(from)` (pattern arrow\npoints opposite to the actual edge).",
+          "type": "string"
+        }
+      ]
+    },
+    "PatternSpec": {
+      "description": "Declarative description of a subgraph pattern to match.\n\nCrosses the FFI / MCP wire without lifetimes. Indices into `nodes`\nand `edges` form the slot space — i.e. `MatchRefs.nodes[i]` is the\nbinding of `spec.nodes[i]`.",
+      "properties": {
+        "anchors": {
+          "items": {
+            "$ref": "#/$defs/PatternAnchor"
+          },
+          "type": "array"
+        },
+        "edges": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EdgePattern"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/NodePattern"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "QueryResult": {
+      "properties": {
+        "rows": {
+          "description": "Matched nodes in `NodeRef` space. For non-`SceneNode` entities\n(e.g. edges, internal infrastructure), the `path` is empty (root).",
+          "items": {
+            "$ref": "#/$defs/NodeRef"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "description": "`max_items` truncated the result before all candidates were\nconsidered. Issue another query with a higher cap or narrower\nfilter.",
+          "type": "boolean"
+        },
+        "unknown_components": {
+          "description": "Component-type names from the spec that the registry didn't\nrecognise. The query still ran with the remaining names — this\nfield lets the agent detect typos / unregistered types instead\nof silently matching everything.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "rows",
+        "truncated",
+        "unknown_components"
+      ],
+      "type": "object"
+    },
+    "QuerySpec": {
+      "description": "Filter spec. `with`/`without` are component-type-name strings;\n`under` confines the search to a subtree; `max_items` caps the\nresult.",
+      "properties": {
+        "max_items": {
+          "default": 0,
+          "description": "Cap on result rows. `0` = unlimited.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "under": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Restrict the search to the subtree rooted at this node\n(inclusive). `None` = entire world."
+        },
+        "with": {
+          "default": [],
+          "description": "Entities must carry **every** listed component.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "without": {
+          "description": "Entities must carry **none** of the listed components.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Rectangle": {
+      "properties": {
+        "corner_radius": {
+          "format": "float",
+          "type": "number"
+        },
+        "fills": {
+          "items": {
+            "$ref": "#/$defs/Paint"
+          },
+          "type": "array"
+        },
+        "stroke_weight": {
+          "format": "float",
+          "type": "number"
+        },
+        "strokes": {
+          "items": {
+            "$ref": "#/$defs/Paint"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "corner_radius",
+        "fills",
+        "strokes",
+        "stroke_weight"
+      ],
+      "type": "object"
+    },
+    "RectangleData": {
+      "description": "Owned Rectangle variant payload + Bevy `Bundle`.",
+      "properties": {
+        "rectangle": {
+          "$ref": "#/$defs/Rectangle"
+        },
+        "size": {
+          "$ref": "#/$defs/Size"
+        }
+      },
+      "required": [
+        "rectangle",
+        "size"
+      ],
+      "type": "object"
+    },
+    "ScanOpts": {
+      "description": "Knobs for [`SceneAgent::scan`](crate::SceneAgent::scan). All optional;\nsane defaults keep the result small enough for a first call from an\nagent that knows nothing about the scene yet.",
+      "properties": {
+        "depth": {
+          "default": 2,
+          "description": "How deep to descend the outline. Default 2 — enough to see \"what\npages exist\" and \"what's at the top level of each page\" without\nflooding the agent. `0` = catalog-only.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kinds": {
+          "default": [],
+          "description": "Filter outline rows by kind. Empty = all kinds.",
+          "items": {
+            "$ref": "#/$defs/NodeKind"
+          },
+          "type": "array"
+        },
+        "max_outline_rows": {
+          "default": 256,
+          "description": "Cap on total outline rows. When exceeded, deeper / later\nchildren are dropped and `OutlineNode::elided_children` is\nincremented on the parent.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "under": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Confine the outline to the subtree rooted at this node. `None` =\nscene roots."
+        }
+      },
+      "type": "object"
+    },
+    "SceneIndex": {
+      "properties": {
+        "catalog": {
+          "$ref": "#/$defs/Catalog"
+        },
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "roots": {
+          "items": {
+            "$ref": "#/$defs/OutlineNode"
+          },
+          "type": "array"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "generation",
+        "catalog",
+        "roots"
+      ],
+      "type": "object"
+    },
+    "ScenePath": {
+      "type": "string"
+    },
+    "SessionId": {
+      "description": "Identifies one run of the scene agent. New UUID per `SceneAgent::new()`.\n\nEquivalent to Rerun's `RecordingId`. An `ApplicationId` analogue (a\nstable schema name across runs) can be layered on later if multiple\nkyoso apps need to coexist in one agent — for now, single UUID is\nenough to detect \"this `NodeRef` is from a previous process.\"",
+      "format": "uuid",
+      "type": "string"
+    },
+    "Size": {
+      "properties": {
+        "height": {
+          "format": "float",
+          "type": "number"
+        },
+        "width": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "SubtreeCost": {
+      "description": "Serializable mirror of [`kyoso_graph::cost::Cost`] so the SDK doesn't\nrequire pulling the graph crate just to read an index. Same fields.",
+      "properties": {
+        "estimated_items": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "estimated_work": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "estimated_items",
+        "estimated_work"
+      ],
+      "type": "object"
+    },
+    "Text": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "fills": {
+          "items": {
+            "$ref": "#/$defs/Paint"
+          },
+          "type": "array"
+        },
+        "style": {
+          "$ref": "#/$defs/TypeStyle"
+        }
+      },
+      "required": [
+        "content",
+        "style",
+        "fills"
+      ],
+      "type": "object"
+    },
+    "TextData": {
+      "description": "Owned Text variant payload + Bevy `Bundle`.",
+      "properties": {
+        "size": {
+          "$ref": "#/$defs/Size"
+        },
+        "text": {
+          "$ref": "#/$defs/Text"
+        }
+      },
+      "required": [
+        "text",
+        "size"
+      ],
+      "type": "object"
+    },
+    "TransformPatch": {
+      "description": "Wire-friendly mirror of Bevy's `Transform`. Translation as `[x, y, z]`,\nrotation as `[x, y, z, w]` (quaternion), uniform/non-uniform scale as\n`[x, y, z]`. Round-trips through `From<Transform>` / `Into<Transform>`.",
+      "properties": {
+        "rotation": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "scale": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "translation": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "translation",
+        "rotation",
+        "scale"
+      ],
+      "type": "object"
+    },
+    "TypeStyle": {
+      "properties": {
+        "font_family": {
+          "type": "string"
+        },
+        "font_size": {
+          "format": "float",
+          "type": "number"
+        },
+        "font_weight": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "line_height": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "font_family",
+        "font_size",
+        "font_weight",
+        "line_height"
+      ],
+      "type": "object"
+    },
+    "UpdatePatch": {
+      "description": "Partial update. All fields optional — the builder methods are the\nexpected entry point. Variant-specific fields no-op silently on\nnon-matching variants today; we'll surface that as a typed error\nonce we have a stronger reason to (see [`MutateError::VariantMismatch`]).",
+      "properties": {
+        "frame_name": {
+          "description": "Rename a Frame. No-op on non-Frame entities.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text_content": {
+          "description": "Set Text content. No-op on non-Text entities.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "transform": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TransformPatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Replace the entity's [`Transform`] wholesale (works on any\nvariant — every scene entity carries one). On the wire we use\n[`TransformPatch`] because Bevy's `Transform` doesn't carry\n`Serialize`/`Deserialize` in the workspace's `default-features = false`\nbuild."
+        }
+      },
+      "type": "object"
+    },
+    "Walk": {
+      "properties": {
+        "cost": {
+          "$ref": "#/$defs/SubtreeCost"
+        },
+        "root": {
+          "$ref": "#/$defs/NodeRef"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/WalkRow"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "description": "True when `max_items` truncated the result before all matching\nrows were collected. The agent can issue another `walk` rooted\nat the last yielded row to continue.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "root",
+        "rows",
+        "truncated",
+        "cost"
+      ],
+      "type": "object"
+    },
+    "WalkOpts": {
+      "properties": {
+        "depth_limit": {
+          "default": null,
+          "description": "Cap depth (in tree edges from root). `None` = unbounded.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kinds": {
+          "default": [],
+          "description": "Filter result rows by kind. Empty = all kinds.\n(Filter is post-yield — see `TraversalQuery` semantics.)",
+          "items": {
+            "$ref": "#/$defs/NodeKind"
+          },
+          "type": "array"
+        },
+        "max_items": {
+          "default": 0,
+          "description": "Cap on row count. 0 = unlimited.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "strategy": {
+          "$ref": "#/$defs/WalkStrategy",
+          "default": "Dfs"
+        }
+      },
+      "type": "object"
+    },
+    "WalkRow": {
+      "properties": {
+        "depth": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "node": {
+          "$ref": "#/$defs/NodeRef"
+        }
+      },
+      "required": [
+        "node",
+        "depth"
+      ],
+      "type": "object"
+    },
+    "WalkStrategy": {
+      "enum": [
+        "Dfs",
+        "Bfs"
+      ],
+      "type": "string"
+    },
+    "WatchOpts": {
+      "properties": {
+        "events": {
+          "default": [],
+          "description": "Filter to specific change kinds. Empty = no filter.",
+          "items": {
+            "$ref": "#/$defs/ChangeKind"
+          },
+          "type": "array"
+        },
+        "kinds": {
+          "default": [],
+          "description": "Filter to specific kinds. Empty = no filter.",
+          "items": {
+            "$ref": "#/$defs/NodeKind"
+          },
+          "type": "array"
+        },
+        "max_items": {
+          "default": 0,
+          "description": "Cap on rows in the returned page. 0 = unlimited.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "under": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Confine to changes whose `entity` resolves under this subtree.\n`None` = whole scene."
+        }
+      },
+      "type": "object"
+    },
+    "WatchPage": {
+      "properties": {
+        "buffer_overflow": {
+          "description": "Ring buffer evicted before the agent read. The agent's\nincremental view is gone; the recovery path is `scan()` →\nrebuild the mental model.",
+          "type": "boolean"
+        },
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/Change"
+          },
+          "type": "array"
+        },
+        "has_more": {
+          "description": "More changes exist past `max_items` — issue another `watch`\nwith `next_cursor` to get them. Today's draft drains in one\npass so this is always false; left in the type so the wire\nshape doesn't need a future change.",
+          "type": "boolean"
+        },
+        "next_cursor": {
+          "$ref": "#/$defs/Cursor"
+        }
+      },
+      "required": [
+        "changes",
+        "next_cursor",
+        "has_more",
+        "buffer_overflow"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Wire surface for the kyoso_agent SceneRead / SceneMutate verbs.",
+  "title": "kyoso_agent",
+  "verbs": [
+    {
+      "description": "Catalog + depth-bounded outline of the scene",
+      "name": "scan",
+      "params": {
+        "$ref": "#/$defs/ScanOpts"
+      },
+      "result": {
+        "$ref": "#/$defs/SceneIndex"
+      }
+    },
+    {
+      "description": "Schemaless component dump + typed variant for one target",
+      "name": "inspect",
+      "params": {
+        "$ref": "#/$defs/NodeTarget"
+      },
+      "result": {
+        "$ref": "#/$defs/EntityReport"
+      }
+    },
+    {
+      "description": "Subtree walk under a root with depth / kind / budget caps",
+      "name": "walk",
+      "params": {
+        "properties": {
+          "opts": {
+            "$ref": "#/$defs/WalkOpts"
+          },
+          "root": {
+            "$ref": "#/$defs/NodeTarget"
+          }
+        },
+        "required": [
+          "root",
+          "opts"
+        ],
+        "type": "object"
+      },
+      "result": {
+        "$ref": "#/$defs/Walk"
+      }
+    },
+    {
+      "description": "One-hop (or transitive) neighbourhood query",
+      "name": "navigate",
+      "params": {
+        "properties": {
+          "opts": {
+            "$ref": "#/$defs/NavOpts"
+          },
+          "root": {
+            "$ref": "#/$defs/NodeTarget"
+          }
+        },
+        "required": [
+          "root",
+          "opts"
+        ],
+        "type": "object"
+      },
+      "result": {
+        "$ref": "#/$defs/Array_of_NodeRef"
+      }
+    },
+    {
+      "description": "Subgraph-isomorphism pattern matching in NodeRef space",
+      "name": "match",
+      "params": {
+        "$ref": "#/$defs/PatternSpec"
+      },
+      "result": {
+        "$ref": "#/$defs/Array_of_MatchRefs"
+      }
+    },
+    {
+      "description": "Coalesced change page since the cursor",
+      "name": "watch",
+      "params": {
+        "properties": {
+          "opts": {
+            "$ref": "#/$defs/WatchOpts"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Cursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "opts"
+        ],
+        "type": "object"
+      },
+      "result": {
+        "$ref": "#/$defs/WatchPage"
+      }
+    },
+    {
+      "description": "Generic ECS component-presence filter — escape hatch",
+      "name": "query",
+      "params": {
+        "$ref": "#/$defs/QuerySpec"
+      },
+      "result": {
+        "$ref": "#/$defs/QueryResult"
+      }
+    },
+    {
+      "description": "Spawn a new node",
+      "name": "create",
+      "params": {
+        "$ref": "#/$defs/CreateSpec"
+      },
+      "result": {
+        "$ref": "#/$defs/MutateResult"
+      }
+    },
+    {
+      "description": "Apply a partial patch to a target",
+      "name": "update",
+      "params": {
+        "properties": {
+          "patch": {
+            "$ref": "#/$defs/UpdatePatch"
+          },
+          "target": {
+            "$ref": "#/$defs/NodeTarget"
+          }
+        },
+        "required": [
+          "target",
+          "patch"
+        ],
+        "type": "object"
+      },
+      "result": {
+        "$ref": "#/$defs/MutateResult"
+      }
+    },
+    {
+      "description": "Despawn a target (cascades through ChildOf)",
+      "name": "delete",
+      "params": {
+        "$ref": "#/$defs/NodeTarget"
+      },
+      "result": {
+        "$ref": "#/$defs/MutateResult"
+      }
+    },
+    {
+      "description": "Reparent or reorder a node",
+      "name": "move",
+      "params": {
+        "$ref": "#/$defs/MoveSpec"
+      },
+      "result": {
+        "$ref": "#/$defs/MutateResult"
+      }
+    }
+  ]
+}

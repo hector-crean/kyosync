@@ -1,0 +1,19 @@
+# Python
+python/.venv/
+python/.pytest_cache/
+python/.mypy_cache/
+python/__pycache__/
+python/**/__pycache__/
+python/uv.lock
+python/dist/
+python/*.egg-info/
+
+# TypeScript
+typescript/node_modules/
+typescript/dist/
+typescript/package-lock.json
+typescript/pnpm-lock.yaml
+
+# Generated schema — committed as the canonical contract artifact; if
+# you'd rather treat it as a build product, move this line down a level.
+# Do NOT ignore: schemas/schema.json
