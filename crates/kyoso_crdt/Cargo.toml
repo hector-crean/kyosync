@@ -10,6 +10,7 @@ description = "CRDT replication layer for kyoso_graph: op log, diffs, server-med
 [dependencies]
 kyoso_crdt_derive  = { workspace = true }
 serde              = { workspace = true }
+schemars           = { workspace = true }
 postcard           = { workspace = true }
 thiserror          = { workspace = true }
 

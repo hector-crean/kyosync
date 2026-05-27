@@ -12,6 +12,7 @@ kyoso_graph_crdt = { workspace = true }
 petgraph = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+schemars = { workspace = true }
 rand = { workspace = true }
 proptest = { workspace = true }
 kyoso_crdt = { workspace = true }

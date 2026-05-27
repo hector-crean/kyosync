@@ -29,6 +29,7 @@ use crate::{NodeKind, SceneNode};
 
 #[derive(
     Component, Default, Clone, Debug, PartialEq, Reflect, SchemaSync, Serialize, Deserialize,
+    schemars::JsonSchema,
 )]
 #[reflect(Component, Default)]
 #[require(NodeKind = NodeKind::Frame)]
@@ -47,7 +48,9 @@ pub struct Frame {
     pub stroke_weight: f32,
 }
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Reflect, Serialize, Deserialize)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Reflect, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename_all = "snake_case")]
 pub enum LayoutMode {
     #[default]
     None,
@@ -61,7 +64,7 @@ pub enum LayoutMode {
 /// The `#[require(NodeKind = NodeKind::Frame)]` on [`Frame`] auto-inserts
 /// the discriminator, so the sync layer's per-component ops produce the
 /// same archetype as the local `*Data` spawn path.
-#[derive(Bundle, Default, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Bundle, Default, Serialize, Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
 pub struct FrameData {
     pub frame: Frame,
     pub size: Size,

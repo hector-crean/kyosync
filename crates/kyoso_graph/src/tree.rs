@@ -60,6 +60,7 @@ use crate::{GraphCommand, GraphSystemSet};
     Reflect,
     Serialize,
     Deserialize,
+    schemars::JsonSchema,
     PartialEq,
     Eq,
     PartialOrd,

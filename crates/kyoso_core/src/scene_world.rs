@@ -10,9 +10,11 @@
 //! ## Two flavours of read
 //!
 //! - **Structural** ([`SceneWorld::traverse`],
-//!   [`SceneWorld::component_names`]) — delegate to
-//!   [`WorldGraphView`] and don't need per-variant typing. Use these
-//!   when you want raw tree shape + ad-hoc component-presence filters.
+//!   [`SceneWorld::traverse_graph`], [`SceneWorld::component_names`])
+//!   — delegate to the cached [`WorldSceneView<&SceneNode, &SceneEdge>`]
+//!   and don't need per-variant typing. Use these when you want raw
+//!   tree shape, entity-edge walks, or ad-hoc component-presence
+//!   filters.
 //!
 //! - **Typed** ([`SceneWorld::iter_as`], [`SceneWorld::read_as`],
 //!   [`SceneWorld::traverse_as`], [`SceneWorld::traverse_typed`]) —
@@ -47,14 +49,14 @@ use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
 use kyoso_crdt::CrdtId;
 use kyoso_graph::descriptor::{GraphMetadata, NodeDescriptor, SceneGraphDescriptor};
-use kyoso_graph::traversal::{TraversalQuery, WorldEntityRef, WorldTreeView};
+use kyoso_graph::traversal::{TraversalQuery, WorldEntityRef, WorldSceneView};
 use kyoso_graph::tree::TreeQuery;
 use kyoso_graph::variant::{NodeVariant, NodeVariants};
 use kyoso_graph::Graph;
 use kyoso_graph_sync::EntityCrdtIndex;
 
 use crate::descriptor::scene_node_descriptor;
-use crate::SceneNode;
+use crate::{SceneEdge, SceneNode};
 
 /// Owned Bevy `App` plus a cached traversal-view [`SystemState`]. The
 /// natural binding-layer handle: each method takes `&mut self`, runs
@@ -65,13 +67,15 @@ pub struct SceneWorld {
     /// at construction so per-call cost is just one
     /// [`SystemState::get`] (cache lookup of resolved system params).
     ///
-    /// The cached view is [`WorldTreeView`] (unfiltered) — the agent
-    /// path walks hierarchy and should surface bare overlays via
-    /// [`kyoso_graph::traversal::NodeRef::Local`]. Callers that want
-    /// a typed view (filtered, or graph-edge access) can build their
-    /// own [`SystemState`] against [`kyoso_graph::traversal::WorldGraphView`]
-    /// or [`kyoso_graph::traversal::WorldSceneView`].
-    tree_state: SystemState<WorldTreeView<'static, 'static>>,
+    /// The cached view is [`WorldSceneView<&SceneNode, &SceneEdge>`] —
+    /// hierarchy (`Children` / `ChildOf` / `OrderKey`) **and** the
+    /// entity-edge graph (`SceneEdge` / `EdgeFrom` / `EdgeTo`) in one
+    /// SystemParam. `NF = EF = ()` keeps the tree unfiltered so the
+    /// agent path still surfaces bare overlays via
+    /// [`kyoso_graph::traversal::NodeRef::Local`]; the graph half is
+    /// available for edge walks without a per-call `SystemState` build.
+    scene_state:
+        SystemState<WorldSceneView<'static, 'static, &'static SceneNode, &'static SceneEdge>>,
 }
 
 impl SceneWorld {
@@ -81,16 +85,16 @@ impl SceneWorld {
     pub fn new() -> Self {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
-        let tree_state = SystemState::new(app.world_mut());
-        Self { app, tree_state }
+        let scene_state = SystemState::new(app.world_mut());
+        Self { app, scene_state }
     }
 
     /// Wrap an existing `App`. Use this when the app is already
     /// configured (e.g. tests bringing their own plugin set, or
     /// integrating with an outer harness like `kyoso_client::AppPlugin`).
     pub fn from_app(mut app: App) -> Self {
-        let tree_state = SystemState::new(app.world_mut());
-        Self { app, tree_state }
+        let scene_state = SystemState::new(app.world_mut());
+        Self { app, scene_state }
     }
 
     /// Borrow the wrapped `App` immutably.
@@ -119,37 +123,49 @@ impl SceneWorld {
         self.app.update();
     }
 
-    /// Materialise the cached traversal view. Each call re-runs the
+    /// Materialise the cached scene view. Each call re-runs the
     /// resolved-`SystemParam` plumbing (cheap — no component-id
     /// resolution, that already happened at construction).
+    ///
+    /// Returns a [`WorldSceneView<&SceneNode, &SceneEdge>`] — both
+    /// hierarchy (`scene.tree`) and entity-edge graph (`scene.graph`)
+    /// in one borrow.
     ///
     /// Panics if `SystemParam` validation fails. That can only happen
     /// if the underlying resources go missing, which the wrapper
     /// itself controls — so callers can treat this as infallible.
-    pub fn tree_view(&mut self) -> WorldTreeView<'_, '_> {
-        self.tree_state
+    pub fn scene_view(
+        &mut self,
+    ) -> WorldSceneView<'_, '_, &'static SceneNode, &'static SceneEdge> {
+        self.scene_state
             .get(self.app.world())
-            .expect("SystemParam validation: WorldTreeView resources missing")
+            .expect("SystemParam validation: WorldSceneView resources missing")
     }
 
     // ========================================================================
-    // Structural reads — delegate to WorldTreeView
+    // Structural reads — delegate to WorldSceneView
     // ========================================================================
 
     /// Run a [`TraversalQuery`] over the wrapped world, resolving
     /// each entity to its [`CrdtId`] via the [`EntityCrdtIndex`]
     /// resource (falling back to [`kyoso_graph::traversal::NodeRef::Local`]
-    /// for unregistered entities). Walks the **tree** (hierarchy);
-    /// for entity-edge graph walks, build your own
-    /// [`kyoso_graph::traversal::WorldGraphView`] SystemState.
+    /// for unregistered entities). Walks the **tree** (hierarchy); for
+    /// entity-edge walks see [`Self::traverse_graph`].
     pub fn traverse(&mut self, q: &TraversalQuery) -> Vec<WorldEntityRef<CrdtId>> {
-        self.tree_view().traverse_with::<EntityCrdtIndex>(q)
+        self.scene_view().traverse_tree_with::<EntityCrdtIndex>(q)
+    }
+
+    /// Run a [`TraversalQuery`] over the entity-edge graph
+    /// (`SceneEdge` / `EdgeFrom` / `EdgeTo`), resolving each yielded
+    /// entity to its [`CrdtId`] via [`EntityCrdtIndex`].
+    pub fn traverse_graph(&mut self, q: &TraversalQuery) -> Vec<WorldEntityRef<CrdtId>> {
+        self.scene_view().traverse_graph_with::<EntityCrdtIndex>(q)
     }
 
     /// Schemaless component-name dump for `entity`. See
-    /// [`WorldTreeView::component_names`].
+    /// [`WorldSceneView::component_names`].
     pub fn component_names(&mut self, entity: Entity) -> Vec<String> {
-        self.tree_view().component_names(entity)
+        self.scene_view().component_names(entity)
     }
 
     /// Build a fully-typed [`SceneGraphDescriptor`] for the entire
@@ -275,6 +291,40 @@ impl SceneWorld {
                 <G::Variants as NodeVariants>::try_materialize(&mut states, world, r.entity)
                     .map(|node| (r, node))
             })
+            .collect()
+    }
+
+    /// Single-entity closed-sum dispatch. Tries every variant in
+    /// `G::Variants` and returns the first match wrapped as `G::Node`,
+    /// or `None` if the entity matches no variant.
+    ///
+    /// Builds a fresh per-variant `QueryState` tuple on each call. For
+    /// batched use ([`Self::traverse_typed`] / [`Self::materialize_many`])
+    /// the state cache is amortised; this method is the right one-shot
+    /// form for ad-hoc lookups (e.g. an agent's `inspect`).
+    pub fn materialize_at<G: Graph>(&mut self, entity: Entity) -> Option<G::Node> {
+        let world = self.app.world_mut();
+        let mut states = <G::Variants as NodeVariants>::build_states(world);
+        <G::Variants as NodeVariants>::try_materialize(&mut states, world, entity)
+    }
+
+    /// Batched [`Self::materialize_at`]. Builds the `QueryState` tuple
+    /// once and probes each entity in input order; non-matching
+    /// entities surface as `None` (so the result vector is positional
+    /// against the input — unlike [`Self::traverse_typed`], which
+    /// drops them).
+    ///
+    /// Prefer this over a hot loop of [`Self::materialize_at`] when
+    /// projecting the result of a walk or query.
+    pub fn materialize_many<G: Graph>(
+        &mut self,
+        entities: impl IntoIterator<Item = Entity>,
+    ) -> Vec<Option<G::Node>> {
+        let world = self.app.world_mut();
+        let mut states = <G::Variants as NodeVariants>::build_states(world);
+        entities
+            .into_iter()
+            .map(|e| <G::Variants as NodeVariants>::try_materialize(&mut states, world, e))
             .collect()
     }
 }

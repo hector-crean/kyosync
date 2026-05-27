@@ -1,78 +1,51 @@
 //! `kyoso_agent` demo binary.
 //!
-//! Builds a small scene, walks it through every agent tool, and
-//! prints what an agent would see:
-//!
-//! 1. Full LLM-shaped JSON descriptor (`describe`).
-//! 2. Per-variant listings (`list_frames` / `list_rectangles` / `list_texts`).
-//! 3. Subtree walks resolved to `NodeRef::{Replicated, Local}`.
-//! 4. Typed sum-type subtree walk (`subtree_typed`).
-//! 5. Per-entity inspection (`inspect`) — component-name dump.
-//! 6. Pattern matching — find every `Frame → Text` edge in the scene.
+//! Builds a small scene and walks it through every agent tool the
+//! Rerun-style verb set offers — `scan`, `inspect`, `walk`, `navigate`,
+//! `match`, and `watch`. Prints what an agent would see.
 //!
 //! Run with `cargo run -p kyoso_agent --bin demo`.
 
-use kyoso_agent::{spawn_demo_scene, SceneAgent};
-use kyoso_core::{Frame, Text};
-use kyoso_graph::traversal::TraversalQuery;
+use kyoso_agent::{
+    spawn_demo_scene, NavDir, NavEdgeFilter, NavOpts, NodePattern, PatternSpec, SceneAgent,
+    ScanOpts, WalkOpts, WatchOpts,
+};
+use kyoso_core::NodeKind;
 
 fn main() {
     let mut agent = SceneAgent::new();
     let ents = spawn_demo_scene(agent.scene_world());
+    // Pump one frame so any change-detection systems flush events
+    // and the watch buffer reflects the initial spawn.
+    agent.scene_world().update();
+    println!("session = {}", agent.session());
+    println!();
 
-    println!("── 1. describe() — LLM-shaped scene descriptor ──");
-    let descriptor = agent.describe();
+    println!("── 1. scan() — catalog + outline ──");
+    let index = agent.scan(ScanOpts::default());
     println!(
-        "{}\n",
-        serde_json::to_string_pretty(&descriptor).unwrap_or_else(|_| "<serialize failed>".into())
+        "  catalog: total={} frames={} rectangles={} texts={} max_depth={}",
+        index.catalog.total_nodes,
+        index.catalog.kind_counts.get(&NodeKind::Frame).unwrap_or(&0),
+        index
+            .catalog
+            .kind_counts
+            .get(&NodeKind::Rectangle)
+            .unwrap_or(&0),
+        index.catalog.kind_counts.get(&NodeKind::Text).unwrap_or(&0),
+        index.catalog.max_depth,
     );
-
-    println!("── 2. list_frames() / list_rectangles() / list_texts() ──");
-    let frames = agent.list_frames();
-    println!("frames: {}", frames.len());
-    for (e, data) in &frames {
-        println!("  {e:?}  name={:?}", data.frame.name);
-    }
-    let rects = agent.list_rectangles();
-    println!("rectangles: {}", rects.len());
-    for (e, _data) in &rects {
-        println!("  {e:?}");
-    }
-    let texts = agent.list_texts();
-    println!("texts: {}", texts.len());
-    for (e, data) in &texts {
-        println!("  {e:?}  content={:?}", data.text.content);
+    for root in &index.roots {
+        print_outline(root, 1);
     }
     println!();
 
-    println!("── 3. subtree() from root — NodeRef-resolved rows ──");
-    let rows = agent.subtree(ents.root, TraversalQuery::new());
-    for r in &rows {
-        println!(
-            "  depth={} entity={:?}  id={:?}",
-            r.depth, r.entity, r.id
-        );
-    }
-    println!();
-
-    println!("── 4. subtree_typed::<SceneNode>() from root — closed-sum dispatch ──");
-    let typed_rows = agent.subtree_typed(ents.root, TraversalQuery::new());
-    for (row, node) in &typed_rows {
-        let kind = match node {
-            kyoso_core::Node::Frame(d) => format!("Frame name={:?}", d.frame.name),
-            kyoso_core::Node::Rectangle(_) => "Rectangle".into(),
-            kyoso_core::Node::Text(d) => format!("Text content={:?}", d.text.content),
-        };
-        println!("  depth={} {:?}  {}", row.depth, row.id, kind);
-    }
-    println!();
-
-    println!("── 5. inspect(header) ──");
+    println!("── 2. inspect(header) — typed variant + components ──");
     let report = agent.inspect(ents.header);
     println!(
-        "  entity={:?}  node={}",
-        report.entity,
-        match &report.node {
+        "  node = {}  variant = {}",
+        report.node.path,
+        match &report.variant {
             Some(kyoso_core::Node::Frame(d)) => format!("Frame name={:?}", d.frame.name),
             Some(kyoso_core::Node::Rectangle(_)) => "Rectangle".into(),
             Some(kyoso_core::Node::Text(_)) => "Text".into(),
@@ -85,32 +58,101 @@ fn main() {
     }
     println!();
 
-    println!("── 6. find_matches — Frame → Text cross-edges ──");
-    let mut builder = SceneAgent::pattern_builder();
-    // We need to close over Bevy queries to predicate by component;
-    // for this demo we approximate by anchoring & inspecting after-
-    // wards. Run the pattern unconstrained (any A → any B) and then
-    // filter rows where source is a Frame and target is a Text.
-    let a = builder.node(|_| true);
-    let b = builder.node(|_| true);
-    let _e = builder.edge(a, b);
-    let pattern = builder.build();
-    let matches = agent.find_matches(&pattern);
-    let mut frame_to_text = 0usize;
-    for m in &matches {
-        let src = m.node(a);
-        let dst = m.node(b);
-        let src_is_frame = agent.scene_world().read_as::<Frame>(src).is_some();
-        let dst_is_text = agent.scene_world().read_as::<Text>(dst).is_some();
-        if src_is_frame && dst_is_text {
-            println!("  Frame {src:?} → Text {dst:?}");
-            frame_to_text += 1;
-        }
+    println!("── 3. walk(root) — depth-bounded, NodeRef rows ──");
+    let walk = agent.walk(
+        ents.root,
+        WalkOpts {
+            depth_limit: Some(2),
+            ..Default::default()
+        },
+    );
+    for row in &walk.rows {
+        println!(
+            "  depth={}  kind={:?}  path={}",
+            row.depth, row.kind, row.node.path
+        );
     }
-    println!("  total Frame→Text matches: {frame_to_text}");
-    println!("  total A→B matches (no filter): {}", matches.len());
+    println!(
+        "  cost: items={} work={}  truncated={}",
+        walk.cost.estimated_items, walk.cost.estimated_work, walk.truncated,
+    );
+    println!();
+
+    println!("── 4. navigate(label, Out, EntityEdgesOnly) — cross-frame edge ──");
+    let neighbours = agent.navigate(
+        ents.label,
+        NavOpts {
+            direction: NavDir::Out,
+            edges: NavEdgeFilter::EntityEdgesOnly,
+            ..Default::default()
+        },
+    );
+    for n in &neighbours {
+        println!("  → {}", n.path);
+    }
+    println!();
+
+    println!("── 5. navigate(label, Upstream, TreeOnly) — ancestors ──");
+    let ancestors = agent.navigate(
+        ents.label,
+        NavOpts {
+            direction: NavDir::Upstream,
+            edges: NavEdgeFilter::TreeOnly,
+            ..Default::default()
+        },
+    );
+    for n in &ancestors {
+        println!("  ↑ {}", n.path);
+    }
+    println!();
+
+    println!("── 6. r#match — every A → B in NodeRef space (PatternSpec) ──");
+    let mut spec = PatternSpec::new();
+    let a = spec.add_node(NodePattern::any());
+    let b = spec.add_node(NodePattern::any());
+    spec.add_edge(a, b);
+    let matches = agent.r#match(&spec);
+    for refs in &matches {
+        let edge = &refs.edges[0];
+        println!("  {} → {}", edge.from.path, edge.to.path);
+    }
+    println!("  total edges matched: {}", matches.len());
+    println!();
+
+    println!("── 7. watch(None) — baseline change stream after spawn ──");
+    let page = agent.watch(None, WatchOpts::default());
+    println!(
+        "  generation = {}  changes = {}  buffer_overflow = {}",
+        page.next_cursor.generation,
+        page.changes.len(),
+        page.buffer_overflow,
+    );
+    for c in page.changes.iter().take(6) {
+        println!(
+            "    {:?} ×{}  {}",
+            c.kind, c.change_count, c.node.path,
+        );
+    }
     println!();
 
     println!("✓ demo complete");
     let _ = ents;
+}
+
+fn print_outline(node: &kyoso_agent::OutlineNode, indent: usize) {
+    let pad = "  ".repeat(indent);
+    let label = node.name.clone().unwrap_or_else(|| "<unnamed>".into());
+    println!(
+        "{pad}{label} ({:?})  depth={}  child_count={}  elided={}  cost={}/{}  path={}",
+        node.kind,
+        node.depth,
+        node.child_count,
+        node.elided_children,
+        node.subtree_cost.estimated_items,
+        node.subtree_cost.estimated_work,
+        node.node.path,
+    );
+    for child in &node.children {
+        print_outline(child, indent + 1);
+    }
 }

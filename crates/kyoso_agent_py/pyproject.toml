@@ -1,0 +1,30 @@
+# pyproject.toml for the maturin build of `kyoso_agent_py` — the PyO3
+# extension that bridges Python ↔ `kyoso_agent_rpc::dispatch`.
+#
+# This is *not* the user-facing Python package — that lives in
+# `sdk/python/` and is the `kyoso-agent` PyPI distribution. This
+# pyproject only exists so `maturin build` / `maturin develop` know
+# what to do with the Rust crate.
+
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "kyoso-agent-py"
+version = "0.1.0"
+description = "PyO3 native extension — dispatcher into kyoso_agent_rpc. Internal artifact consumed by the kyoso-agent SDK."
+license = { text = "MIT OR Apache-2.0" }
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.maturin]
+# The wheel ships only the compiled `kyoso_agent_py` native module —
+# all typing + the agent surface lives in the user-facing
+# `kyoso-agent` SDK on top.
+module-name = "kyoso_agent_py"
+features = ["pyo3/extension-module"]
+manifest-path = "Cargo.toml"

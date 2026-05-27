@@ -1,0 +1,17 @@
+[package]
+name = "kyoso_agent_rpc"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "JSON-RPC-shaped dispatcher over the kyoso_agent verb surface. Pure Rust; transport-agnostic. The single seam stdio/HTTP/WS/FFI bridges route through."
+
+[dependencies]
+kyoso_agent = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+thiserror   = { workspace = true }
+
+[lints]
+workspace = true

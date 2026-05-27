@@ -1,0 +1,24 @@
+[package]
+name = "kyoso_agent_py"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "PyO3 extension exposing the kyoso_agent verb surface to Python via a thin dispatch() seam over kyoso_agent_rpc."
+
+[lib]
+name = "kyoso_agent_py"
+# Both `cdylib` (the .so/.dylib/.pyd Python loads) and `rlib` (so Rust
+# downstream can link this crate if needed for tests).
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kyoso_agent     = { workspace = true }
+kyoso_agent_rpc = { workspace = true }
+serde_json      = { workspace = true }
+pyo3            = { version = "0.27", features = ["extension-module", "abi3-py310"] }
+pythonize       = "0.27"
+
+[lints]
+workspace = true

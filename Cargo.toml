@@ -39,6 +39,8 @@ kyoso_drag = { path = "crates/kyoso_drag" }
 kyoso_polyline = { path = "crates/kyoso_polyline" }
 kyoso_client = { path = "apps/kyoso_client" }
 kyoso_agent  = { path = "apps/kyoso_agent" }
+kyoso_agent_rpc = { path = "crates/kyoso_agent_rpc" }
+kyoso_agent_py = { path = "crates/kyoso_agent_py" }
 kyoso_circuit = { path = "crates/kyoso_circuit" }
 kyoso_circuit_client = { path = "apps/kyoso_circuit_client" }
 kyoso_scenarios = { path = "crates/kyoso_scenarios" }
@@ -61,7 +63,7 @@ thiserror = "1.0"
 # ── Serialisation ─────────────────────────────────────────────────────────────
 serde      = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
-schemars   = { version = "1.0.0", features = ["chrono04"] }
+schemars   = { version = "1.0.0", features = ["chrono04", "uuid1"] }
 # Compact varint-encoded format for CRDT wire frames.
 postcard   = { version = "1.1", features = ["alloc"] }
 

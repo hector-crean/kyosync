@@ -81,7 +81,7 @@ fn inspect_reports_components_and_typed_node_for_known_entity() {
 
     // The typed node materialised as a Frame — this is the real
     // agent-relevant assertion.
-    match report.node {
+    match report.variant {
         Some(Node::Frame(data)) => assert_eq!(data.frame.name, "Header"),
         other => panic!("expected Frame, got {other:?}"),
     }
@@ -95,6 +95,7 @@ fn inspect_returns_empty_for_unknown_entity() {
     let bogus = bevy::prelude::Entity::from_raw_u32(99_999).unwrap();
     let report = agent.inspect(bogus);
 
-    assert!(report.node.is_none());
+    assert!(report.variant.is_none());
+    assert!(report.entity_bits.is_none());
     assert!(report.component_names.is_empty());
 }

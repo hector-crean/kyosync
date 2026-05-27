@@ -13,8 +13,11 @@ kyoso_graph      = { workspace = true }
 kyoso_graph_sync = { workspace = true }
 kyoso_crdt       = { workspace = true }
 
-bevy       = { workspace = true }
+bevy       = { workspace = true, features = ["debug"] }
+serde      = { workspace = true }
 serde_json = { workspace = true }
+schemars   = { workspace = true }
+uuid       = { workspace = true, features = ["v4", "serde"] }
 
 [lints]
 workspace = true
@@ -22,3 +25,7 @@ workspace = true
 [[bin]]
 name = "demo"
 path = "src/bin/demo.rs"
+
+[[bin]]
+name = "emit_schema"
+path = "src/bin/emit_schema.rs"

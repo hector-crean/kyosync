@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use bevy::prelude::*;
 
-#[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum Paint {
     Solid {
         /// sRGB linear with alpha, in `[0.0, 1.0]`.
@@ -45,7 +45,7 @@ impl Default for Paint {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Reflect, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Reflect, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum GradientType {
     #[default]
     Linear,
@@ -54,7 +54,7 @@ pub enum GradientType {
     Diamond,
 }
 
-#[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GradientStop {
     /// `[0.0, 1.0]` along the gradient.
     pub position: f32,
@@ -70,7 +70,7 @@ impl Default for GradientStop {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Reflect, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Reflect, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ImageScaleMode {
     #[default]
     Fill,

@@ -54,7 +54,7 @@ use bevy::ecs::system::RunSystemOnce;
 /// or [`SceneWorld::traverse_typed::<SceneNode>`](crate::SceneWorld::traverse_typed)
 /// (walking) — both go through the
 /// [`kyoso_graph::variant::NodeVariants`] tuple dispatch.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Node {
     Frame(FrameData),

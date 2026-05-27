@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(
     Component, Default, Clone, Debug, PartialEq, Reflect, SchemaSync, Serialize, Deserialize,
+    schemars::JsonSchema,
 )]
 #[reflect(Component, Default)]
 #[schema(name = "Size")]

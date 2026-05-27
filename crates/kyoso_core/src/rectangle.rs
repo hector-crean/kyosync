@@ -20,6 +20,7 @@ use crate::{NodeKind, SceneNode};
 
 #[derive(
     Component, Default, Clone, Debug, PartialEq, Reflect, SchemaSync, Serialize, Deserialize,
+    schemars::JsonSchema,
 )]
 #[reflect(Component, Default)]
 #[require(NodeKind = NodeKind::Rectangle)]
@@ -32,7 +33,7 @@ pub struct Rectangle {
 }
 
 /// Owned Rectangle variant payload + Bevy `Bundle`.
-#[derive(Bundle, Default, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Bundle, Default, Serialize, Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
 pub struct RectangleData {
     pub rectangle: Rectangle,
     pub size: Size,

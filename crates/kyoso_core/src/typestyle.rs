@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use kyoso_sync::SchemaSync;
 use serde::{Deserialize, Serialize};
 
-#[derive(Component, Clone, Debug, PartialEq, Reflect, SchemaSync, Serialize, Deserialize)]
+#[derive(Component, Clone, Debug, PartialEq, Reflect, SchemaSync, Serialize, Deserialize, schemars::JsonSchema)]
 #[reflect(Component, Default)]
 #[schema(name = "TypeStyle")]
 pub struct TypeStyle {

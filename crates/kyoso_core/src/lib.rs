@@ -110,6 +110,7 @@ pub struct SceneNode;
 /// so the tag and the data cannot drift apart.
 #[derive(
     Component, Reflect, Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize,
+    schemars::JsonSchema,
 )]
 #[reflect(Component)]
 #[serde(rename_all = "snake_case")]

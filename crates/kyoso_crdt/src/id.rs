@@ -37,7 +37,10 @@ pub type GlobalSeq = u64;
 /// Once minted on a peer, this ID is permanent and shared across all
 /// replicas. The encoding is varint-friendly (small peer IDs and dense
 /// counters compress well under postcard).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct CrdtId {
     pub peer: PeerId,
     pub seq: LocalSeq,
